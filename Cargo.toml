@@ -1,8 +1,21 @@
 [package]
 name = "xml5"
 version = "0.1.0"
+authors = ["Ygg01"]
+description = "XML5 parser inspired by quick xml"
 edition = "2021"
+
+keywords = ["xml", "xml5", "parser"]
+categories = ["parsing", "text-processing"]
+license = "MIT OR Apache-2.0"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+encoding_rs = { version = "0.8.26", optional = true }
+memchr = "2.3.4"
+
+[features]
+default = []
+encoding = ["encoding_rs"]
+
