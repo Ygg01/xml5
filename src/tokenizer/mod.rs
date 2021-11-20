@@ -1,5 +1,13 @@
+mod decoding;
+mod reader;
+
+use std::borrow::Cow;
 use std::io::BufRead;
-use encoding_rs::Encoding;
+
+#[cfg(feature = "encoding_rs")]
+use encoding_rs::{Encoding};
+use crate::errors::TokenizerResult;
+use crate::events::Event;
 
 pub struct Tokenizer<R: BufRead> {
     pub(crate) reader: R,
@@ -25,7 +33,7 @@ impl<R: BufRead> Tokenizer<R>{
 
 #[derive(Debug, Clone, Copy)]
 #[doc(hidden)]
-pub enum TokenState {
+enum TokenState {
     Data,
     TagState,
     EndTagState,
