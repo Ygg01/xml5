@@ -1,4 +1,5 @@
-use std::borrow::Cow;
+use std::borrow::{Borrow, Cow};
+use std::str::from_utf8;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TagAndAttrText<'a> {
@@ -24,11 +25,29 @@ impl<'a> Default for BytesText<'a> {
 
 impl<'a> BytesText<'a> {
     pub fn from_cow(buf: Cow<'a, [u8]>) -> BytesText<'a> {
-        BytesText{
+        BytesText {
             buf,
         }
     }
+
+    #[inline]
+    pub fn into_owned(self) -> BytesText<'static> {
+        BytesText {
+            buf: self.buf.into_owned().into(),
+        }
+    }
 }
+
+impl<'a> ToString for BytesText<'a> {
+    fn to_string(&self) -> String {
+        // TODO deal with encoding later
+        unsafe {
+            String::from_utf8_unchecked(self.buf.clone().into())
+        }
+    }
+}
+
+
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Event<'a> {

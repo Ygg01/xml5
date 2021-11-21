@@ -16,6 +16,7 @@ impl<R: BufRead> Tokenizer<R> {
             state: TokenState::Data,
             event_ready: Text(BytesText::default()),
             current_text: Range::default(),
+            current_tag: Range::default(),
             #[cfg(feature = "encoding")]
             encoding: ::encoding_rs::UTF_8,
             #[cfg(feature = "encoding")]

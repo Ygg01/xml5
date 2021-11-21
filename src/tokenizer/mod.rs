@@ -20,10 +20,12 @@ pub struct Tokenizer<R: BufRead> {
     state: TokenState,
     event_ready: Event<'static>,
     /*
-        Field related to emitting text tokens
+        Field related to emitting events
      */
-    /// position where text ends
+    /// Where fragment of text was start and ends
     current_text: Range<usize>,
+    /// Where 
+    current_tag: Range<usize>,
     /// encoding specified in the xml, or utf8 if none found
     #[cfg(feature = "encoding")]
     encoding: &'static Encoding,

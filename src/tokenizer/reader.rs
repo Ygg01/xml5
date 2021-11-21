@@ -1,4 +1,3 @@
-use std::borrow::Cow;
 use std::io;
 use std::io::BufRead;
 use std::ops::Range;
@@ -10,11 +9,10 @@ pub(crate) trait Reader<'r, 'i, B>
         Self: 'i
 {
     fn read_pos(&mut self, pos: usize) -> Result<Option<u8>>;
-    
-    fn read_range(&mut self, buf: B, range: Range<usize>) -> Result<Option<&[u8]>>;
+    fn read_range(&mut self, buf: B, range: Range<usize>) -> Result<Option<&'r [u8]>>;
 }
 
-impl<'b, 'i, R: BufRead + 'i> Reader<'b, 'i, &'b mut Vec<u8>> for R {
+impl<'r, 'i, B: BufRead + 'i> Reader<'r, 'i, &'r mut Vec<u8>> for B {
     fn read_pos(&mut self, pos: usize) -> Result<Option<u8>> {
         loop {
             break match self.fill_buf() {
@@ -30,8 +28,8 @@ impl<'b, 'i, R: BufRead + 'i> Reader<'b, 'i, &'b mut Vec<u8>> for R {
             };
         }
     }
-    
-    fn read_range(&mut self, buf: &'b mut Vec<u8>, range: Range<usize>) -> Result<Option<&[u8]>> {
+
+    fn read_range(&mut self, buf: &'r mut Vec<u8>, range: Range<usize>) -> Result<Option<&'r [u8]>> {
         let mut done = false;
         while !done {
             let available = match self.fill_buf() {
@@ -45,11 +43,12 @@ impl<'b, 'i, R: BufRead + 'i> Reader<'b, 'i, &'b mut Vec<u8>> for R {
 
             if available.len() >= range.end {
                 done = true;
+
                 buf.extend_from_slice(&available[range.start..range.end])
             }
         }
 
-        Ok(None)
+        Ok(Some(buf))
     }
 }
 
@@ -62,8 +61,8 @@ impl<'a> Reader<'a, 'a, ()> for &'a [u8] {
         }
     }
 
-    fn read_range(&mut self, buf: (), range: Range<usize>) -> Result<Option<&[u8]>> {
-        if range.end < self.len()  {
+    fn read_range(&mut self, _buf: (), range: Range<usize>) -> Result<Option<&'a [u8]>> {
+        if range.end < self.len() {
             Ok(Some(&self[range]))
         } else {
             Err(Eof)
