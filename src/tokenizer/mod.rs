@@ -1,42 +1,49 @@
-mod decoding;
-mod reader;
-
-use std::borrow::Cow;
 use std::io::BufRead;
+use std::ops::Range;
 
 #[cfg(feature = "encoding_rs")]
-use encoding_rs::{Encoding};
-use crate::errors::TokenizerResult;
-use crate::events::Event;
+use encoding_rs::Encoding;
+
+use crate::errors::{Error};
+use crate::events::{Event};
+
+mod decoding;
+mod reader;
+mod tokenizer;
+
 
 pub struct Tokenizer<R: BufRead> {
     pub(crate) reader: R,
+    /// position of current character
+    pos: usize,
+    /// which state is the tokenizer in
     state: TokenState,
+    event_ready: Event<'static>,
+    /*
+        Field related to emitting text tokens
+     */
+    /// position where text ends
+    current_text: Range<usize>,
+    /// encoding specified in the xml, or utf8 if none found
     #[cfg(feature = "encoding")]
     encoding: &'static Encoding,
+    /// checks if xml5 could identify encoding
     #[cfg(feature = "encoding")]
     is_encoding_set: bool,
 }
 
-impl<R: BufRead> Tokenizer<R>{
-    pub fn from_reader(reader: R) -> Tokenizer<R> {
-        Tokenizer {
-            reader,
-            state: TokenState::Data,
-            #[cfg(feature = "encoding")]
-            encoding: ::encoding_rs::UTF_8,
-            #[cfg(feature = "encoding")]
-            is_encoding_set: false,
-        }
-    }
+pub struct TokenResult<'a> {
+    pub event: Event<'a>,
+    pub error: Error,
 }
 
 #[derive(Debug, Clone, Copy)]
 #[doc(hidden)]
 enum TokenState {
     Data,
-    TagState,
-    EndTagState,
+    CharRefInData,
+    Tag,
+    EndTag,
     EndTagName,
     EndTagNameAfter,
     Pi,
