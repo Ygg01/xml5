@@ -9,7 +9,7 @@ use crate::events::{Event};
 
 mod decoding;
 mod reader;
-mod tokenizer;
+mod machine;
 
 
 pub struct Tokenizer<R: BufRead> {
@@ -23,8 +23,8 @@ pub struct Tokenizer<R: BufRead> {
         Field related to emitting events
      */
     /// Where fragment of text was start and ends
-    current_text: Range<usize>,
-    /// Where 
+    current_text: Vec<RangeOrChar>,
+    /// Where
     current_tag: Range<usize>,
     /// encoding specified in the xml, or utf8 if none found
     #[cfg(feature = "encoding")]
@@ -32,6 +32,12 @@ pub struct Tokenizer<R: BufRead> {
     /// checks if xml5 could identify encoding
     #[cfg(feature = "encoding")]
     is_encoding_set: bool,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum RangeOrChar {
+    SliceRange(usize, usize),
+    Char(char),
 }
 
 pub struct TokenResult<'a> {

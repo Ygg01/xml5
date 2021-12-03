@@ -1,6 +1,7 @@
 use std::io;
 use std::io::BufRead;
 use std::ops::Range;
+use memchr::memchr2;
 use crate::errors::{Error, Result};
 use crate::errors::Error::Eof;
 

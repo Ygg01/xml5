@@ -1,6 +1,7 @@
 use std::borrow::Cow;
 use std::io::BufRead;
 use std::ops::Range;
+use memchr::{memchr, memchr2};
 use crate::errors::Error;
 use crate::events::BytesText;
 use crate::events::Event::Text;
@@ -15,7 +16,7 @@ impl<R: BufRead> Tokenizer<R> {
             pos: 0,
             state: TokenState::Data,
             event_ready: Text(BytesText::default()),
-            current_text: Range::default(),
+            current_text: vec![],
             current_tag: Range::default(),
             #[cfg(feature = "encoding")]
             encoding: ::encoding_rs::UTF_8,
@@ -43,7 +44,7 @@ impl<R: BufRead> Tokenizer<R> {
 
             match self.state {
                 TokenState::Data => {
-                    match next_char {
+                    match self.read_until2(b'&', b'<') {
                         b'&' => self.state = TokenState::CharRefInData,
                         b'<' => self.state = TokenState::Tag,
                         _ => self.emit_input_character(),
@@ -58,7 +59,7 @@ impl<R: BufRead> Tokenizer<R> {
                         b'?' => self.state = TokenState::Pi,
                         b'!' => self.state = TokenState::MarkupDecl,
                         b'\t' | b'\n' | b' ' | b':' | b'<' | b'>' => {
-                            self.remit_character(); // same as emitting '<' char
+                            self.emit_character(b'<'); // same as emitting '<' char
                             self.state = TokenState::Data;
                             self.pos -= 1; //reconsume
                             break self.emit_error(buf, Error::UnexpectedSymbol(next_char));
@@ -77,22 +78,24 @@ impl<R: BufRead> Tokenizer<R> {
         }
     }
 
-    #[inline]
-    fn emit_input_character(&mut self)
+    fn read_until2(&mut self, needle1: u8, needle2: u8) -> u8
     {
-        if self.current_text.is_empty() {
-            self.current_text = self.pos .. self.pos+1;
-        } else {
-            self.current_text.end += 1;
+        if let Some(pos) = memchr2(needle1, needle2, &self.reader.fill_buf())
+        {
+            self.reader.read_pos(pos).unwrap()
         }
     }
 
     #[inline]
-    fn remit_character(&mut self)
+    fn emit_input_character(&mut self)
     {
-        if !self.current_text.is_empty() {
-            self.current_text.start -= 1;
-        }
+        // TODO
+    }
+
+    #[inline]
+    fn emit_character(&mut self, chr: u8)
+    {
+        // TODO
     }
 
     fn emit_tag(&mut self)
@@ -105,11 +108,8 @@ impl<R: BufRead> Tokenizer<R> {
         let error = err;
         let ev = match &self.event_ready {
             Text(_) => {
-                match self.reader.read_range(buf, self.current_text.clone()) {
-                    Ok(Some(x)) => Text(BytesText::from_cow(Cow::Borrowed(x))),
-                    _ => Text(BytesText::default()),
-                }
-            },
+                todo!()
+            }
             _ => Text(BytesText::default())
         };
         TokenResult {

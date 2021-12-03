@@ -10,6 +10,7 @@ pub enum Error {
     UnexpectedSymbol(u8),
     Utf8(Utf8Error),
     Io(::std::io::Error),
+    NotFound,
     Eof,
 }
 
