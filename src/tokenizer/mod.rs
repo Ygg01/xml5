@@ -3,8 +3,6 @@ use std::io::BufRead;
 #[cfg(feature = "encoding_rs")]
 use encoding_rs::Encoding;
 
-use crate::errors::Xml5Error;
-use crate::events::{EmitEvent, Event};
 use crate::tokenizer::emitter::{DefaultEmitter, Emitter};
 
 mod decoding;
@@ -18,9 +16,6 @@ pub struct Tokenizer<R: BufRead, E: Emitter = DefaultEmitter> {
     emitter: E,
     /// which state is the tokenizer in
     state: TokenState,
-    /*
-        Field related to emitting events
-     */
     /// End of file reached - parsing stops
     eof: bool,
     /// encoding specified in the xml, or utf8 if none found
@@ -29,12 +24,6 @@ pub struct Tokenizer<R: BufRead, E: Emitter = DefaultEmitter> {
     /// checks if xml5 could identify encoding
     #[cfg(feature = "encoding")]
     is_encoding_set: bool,
-}
-
-#[derive(Debug, Clone, Copy)]
-pub(crate) enum RangeOrChar {
-    SliceRange(usize, usize),
-    Char(char),
 }
 
 #[derive(Debug, Clone, Copy)]

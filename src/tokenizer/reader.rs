@@ -1,9 +1,6 @@
 use std::io;
 use std::io::BufRead;
-use std::ops::Range;
-use memchr::memchr2;
 use crate::errors::{Xml5Error, Xml5Result};
-use crate::errors::Xml5Error::Eof;
 use crate::tokenizer::reader::FastRead::Needle;
 
 pub(crate) trait Reader<'r, 'i, B>
@@ -67,7 +64,7 @@ impl<'r: 'i, 'i, B: BufRead + 'i> Reader<'r, 'i, B> for B {
             read += used;
         }
 
-        if (read != 0)
+        if read != 0
         {
             Ok(FastRead::InterNeedle(buf))
         } else {

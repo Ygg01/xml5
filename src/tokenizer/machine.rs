@@ -1,18 +1,11 @@
-use std::borrow::Cow;
 use std::io::BufRead;
-use std::ops::Range;
-
-use memchr::{memchr, memchr2};
 
 use crate::{Event, Tokenizer};
 use crate::errors::{Xml5Error, Xml5Result};
-use crate::errors::Xml5Error::Eof;
-use crate::events::EmitEvent;
-use crate::events::Event::Text;
-use crate::tokenizer::TokenState;
 use crate::tokenizer::emitter::{DefaultEmitter, Emitter};
 use crate::tokenizer::reader::FastRead::{InterNeedle, Needle};
 use crate::tokenizer::reader::Reader;
+use crate::tokenizer::TokenState;
 
 impl<R: BufRead, E: Emitter> Tokenizer<R, E> {
     pub fn new_with_emitter(reader: R, emitter: E) -> Self {

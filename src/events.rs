@@ -1,6 +1,3 @@
-use std::borrow::{Borrow, Cow};
-use std::str::from_utf8;
-
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Event {
     /// Character data between `Start` and `End` element.
@@ -22,20 +19,6 @@ pub enum Event {
     /// Doctype `<!DOCTYPE ...>`.
     DocType(String),
     /// End of XML document.
-    Eof,
-}
-
-#[derive(PartialEq)]
-pub(crate) enum EmitEvent {
-    Text,
-    StartTag,
-    EndTag,
-    EmptyTag,
-    Comment,
-    CData,
-    Decl,
-    PI,
-    DocType,
     Eof,
 }
 
