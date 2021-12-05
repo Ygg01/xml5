@@ -1,11 +1,10 @@
 use std::io::BufRead;
-use std::ops::Range;
 
 #[cfg(feature = "encoding_rs")]
 use encoding_rs::Encoding;
 
-use crate::errors::{Error};
-use crate::events::{Event};
+use crate::errors::Xml5Error;
+use crate::events::{EmitEvent, Event};
 
 mod decoding;
 mod reader;
@@ -18,14 +17,15 @@ pub struct Tokenizer<R: BufRead> {
     pos: usize,
     /// which state is the tokenizer in
     state: TokenState,
-    event_ready: Event<'static>,
     /*
         Field related to emitting events
      */
+    ///
+    events_to_emit: Vec<EmitEvent>,
     /// Where fragment of text was start and ends
-    current_text: Vec<RangeOrChar>,
+    current_text: Vec<u8>,
     /// Where
-    current_tag: Range<usize>,
+    current_tag: Vec<u8>,
     /// encoding specified in the xml, or utf8 if none found
     #[cfg(feature = "encoding")]
     encoding: &'static Encoding,
@@ -38,11 +38,6 @@ pub struct Tokenizer<R: BufRead> {
 pub(crate) enum RangeOrChar {
     SliceRange(usize, usize),
     Char(char),
-}
-
-pub struct TokenResult<'a> {
-    pub event: Event<'a>,
-    pub error: Error,
 }
 
 #[derive(Debug, Clone, Copy)]

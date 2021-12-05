@@ -5,7 +5,7 @@ use std::str::from_utf8;
 #[cfg(feature = "encoding_rs")]
 use encoding_rs::Encoding;
 
-use crate::errors::{Error, Result};
+use crate::errors::{Xml5Error, Xml5Result};
 use crate::tokenizer::Tokenizer;
 
 #[cfg(feature = "encoding")]
@@ -66,11 +66,11 @@ impl<'a, R: BufRead> Tokenizer<R> {
     /// If you instead want to use XML declared encoding, use the `encoding` feature
     #[inline]
     #[cfg(not(feature = "encoding"))]
-    pub fn decode_without_bom<'c>(&self, bytes: &'c [u8]) -> Result<&'c str> {
+    pub fn decode_without_bom<'c>(&self, bytes: &'c [u8]) -> Xml5Result<&'c str> {
         if bytes.starts_with(b"\xEF\xBB\xBF") {
-            from_utf8(&bytes[3..]).map_err(Error::Utf8)
+            from_utf8(&bytes[3..]).map_err(Xml5Error::Utf8)
         } else {
-            from_utf8(bytes).map_err(Error::Utf8)
+            from_utf8(bytes).map_err(Xml5Error::Utf8)
         }
     }
 }

@@ -2,11 +2,13 @@ use std::borrow::Cow;
 use std::io::BufRead;
 use std::ops::Range;
 use memchr::{memchr, memchr2};
-use crate::errors::Error;
-use crate::events::BytesText;
+use crate::errors::{Xml5Error, Xml5Result};
 use crate::events::Event::Text;
-use crate::Tokenizer;
-use crate::tokenizer::{TokenResult, TokenState};
+use crate::{Event, Tokenizer};
+use crate::errors::Xml5Error::Eof;
+use crate::events::EmitEvent;
+use crate::tokenizer::{TokenState};
+use crate::tokenizer::reader::FastRead::{InterNeedle, Needle};
 use crate::tokenizer::reader::Reader;
 
 impl<R: BufRead> Tokenizer<R> {
@@ -15,9 +17,9 @@ impl<R: BufRead> Tokenizer<R> {
             reader,
             pos: 0,
             state: TokenState::Data,
-            event_ready: Text(BytesText::default()),
+            events_to_emit: vec![],
             current_text: vec![],
-            current_tag: Range::default(),
+            current_tag: vec![],
             #[cfg(feature = "encoding")]
             encoding: ::encoding_rs::UTF_8,
             #[cfg(feature = "encoding")]
@@ -26,33 +28,26 @@ impl<R: BufRead> Tokenizer<R> {
     }
 
     #[inline]
-    pub fn read_event<'s: 'b, 'b>(&'s mut self, buf: &'b mut Vec<u8>) -> TokenResult<'b>
-    {
-        self.read_event_buffered(buf)
-    }
-
-    fn read_event_buffered<'i, 'r, B>(&'i mut self, buf: B) -> TokenResult<'i>
-        where
-            R: Reader<'i, 'r, B>
+    pub fn read_event(&mut self) -> Xml5Result<Event>
     {
         loop {
-            let next_char = match self.reader.read_pos(self.pos) {
-                Err(e) => return self.emit_error(buf, e),
-                Ok(None) => return self.emit_error(buf, Error::Eof),
-                Ok(Some(chr)) => chr,
+            let next_char = match self.reader.peek_byte()?
+            {
+                Some(next_char) => next_char,
+                None => return self.emit_error(Xml5Error::Eof),
             };
-
             match self.state {
                 TokenState::Data => {
-                    match self.read_until2(b'&', b'<') {
-                        b'&' => self.state = TokenState::CharRefInData,
-                        b'<' => self.state = TokenState::Tag,
-                        _ => self.emit_input_character(),
+                    match self.reader.read_fast_until2(b'<', b'/')? {
+                        Needle(b'&') => self.state = TokenState::CharRefInData,
+                        Needle(b'<') => self.state = TokenState::Tag,
+                        Needle(_) => self.emit_eof(),
+                        InterNeedle(txt) => {
+                            self.emit_input_characters(txt);
+                        },
+
                     }
-                }
-                TokenState::CharRefInData => {
-                    // TODO
-                }
+                },
                 TokenState::Tag => {
                     match next_char {
                         b'/' => self.state = TokenState::EndTag,
@@ -62,59 +57,44 @@ impl<R: BufRead> Tokenizer<R> {
                             self.emit_character(b'<'); // same as emitting '<' char
                             self.state = TokenState::Data;
                             self.pos -= 1; //reconsume
-                            break self.emit_error(buf, Error::UnexpectedSymbol(next_char));
-                        }
-                        _ => {
-                            self.emit_tag();
-                            self.state = TokenState::TagName;
-                        }
+                            break self.emit_error(Xml5Error::Eof);
+                        },
+                        _ => {},
                     }
                 }
-                _ => (),
+                _ => {}
             }
-
-
-            self.pos += 1;
-        }
-    }
-
-    fn read_until2(&mut self, needle1: u8, needle2: u8) -> u8
-    {
-        if let Some(pos) = memchr2(needle1, needle2, &self.reader.fill_buf())
-        {
-            self.reader.read_pos(pos).unwrap()
         }
     }
 
     #[inline]
-    fn emit_input_character(&mut self)
+    fn emit_input_characters(&mut self, mut buf: Vec<u8>)
     {
-        // TODO
+        self.current_text.append(&mut buf)
+    }
+
+    #[inline]
+    fn emit_eof(&mut self)
+    {
+        self.emit_error(Xml5Error::Eof);
     }
 
     #[inline]
     fn emit_character(&mut self, chr: u8)
     {
-        // TODO
+        if Some(&EmitEvent::Text) == self.events_to_emit.last() {
+            self.current_text.push(chr);
+        } else {
+            self.events_to_emit.push(EmitEvent::Text);
+        }
     }
 
     fn emit_tag(&mut self)
     {}
 
-    fn emit_error<'i, 'r, B>(&'i mut self, buf: B, err: Error) -> TokenResult<'i>
-        where
-            R: Reader<'i, 'r, B>
+    #[inline ]
+    fn emit_error(&mut self, error: Xml5Error) -> Xml5Result<Event>
     {
-        let error = err;
-        let ev = match &self.event_ready {
-            Text(_) => {
-                todo!()
-            }
-            _ => Text(BytesText::default())
-        };
-        TokenResult {
-            event: ev,
-            error,
-        }
+        todo!()
     }
 }

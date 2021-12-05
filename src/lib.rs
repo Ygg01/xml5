@@ -5,5 +5,5 @@ mod tokenizer;
 mod errors;
 mod events;
 
-pub use tokenizer::{Tokenizer, TokenResult};
+pub use tokenizer::{Tokenizer};
 pub use crate::events::Event;
