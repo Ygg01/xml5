@@ -1,10 +1,8 @@
-use std::io::{BufRead, Error};
+use std::io::{BufRead};
 
 #[cfg(feature = "encoding_rs")]
 use encoding_rs::Encoding;
 use crate::errors::{Xml5Error, Xml5Result};
-use crate::Token;
-use crate::Token::Eof;
 
 use crate::tokenizer::emitter::{DefaultEmitter, Emitter};
 
@@ -44,8 +42,8 @@ impl<R: BufRead, E: Emitter> Tokenizer<R, E> {
         }
     }
 
-    pub fn next_state(&mut self) {
-
+    fn next_state(&mut self) -> Control {
+        todo!()
     }
 }
 
@@ -63,12 +61,25 @@ impl<R: BufRead, E: Emitter> Iterator for Tokenizer<R, E> {
             if let Some(token) = self.emitter.pop_token() {
                 break Some(Ok(token));
             } else if !self.eof {
-                self.next_state();
+                match self.next_state() {
+                    Control::Continue => (),
+                    Control::Eof => {
+                        self.eof = true;
+                        self.emitter.emit_eof();
+                    }
+                    Control::Err(e) => break Some(Err(e))
+                }
             } else {
-                return None;
+                break None;
             }
         }
     }
+}
+
+pub(crate) enum Control {
+    Continue,
+    Eof,
+    Err(Xml5Error),
 }
 
 #[derive(Debug, Clone, Copy)]

@@ -5,6 +5,7 @@ pub trait Emitter {
     type Token;
 
     fn pop_token(&mut self) -> Option<Self::Token>;
+    fn emit_eof(&mut self);
 }
 
 pub struct DefaultEmitter {
@@ -15,6 +16,10 @@ impl Emitter for DefaultEmitter {
 
     fn pop_token(&mut self) -> Option<Token> {
         Some(Token::Eof)
+    }
+
+    fn emit_eof(&mut self) {
+        todo!()
     }
 }
 
