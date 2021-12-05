@@ -77,7 +77,6 @@ impl<'r: 'i, 'i, B: BufRead + 'i> Reader<'r, 'i, B> for B {
     }
 }
 
-
 pub(crate) enum FastRead {
     Needle(u8),
     InterNeedle(Vec<u8>),

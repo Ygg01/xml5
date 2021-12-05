@@ -1,30 +1,37 @@
 use std::borrow::Cow;
 use std::io::BufRead;
 use std::ops::Range;
+
 use memchr::{memchr, memchr2};
-use crate::errors::{Xml5Error, Xml5Result};
-use crate::events::Event::Text;
+
 use crate::{Event, Tokenizer};
+use crate::errors::{Xml5Error, Xml5Result};
 use crate::errors::Xml5Error::Eof;
 use crate::events::EmitEvent;
-use crate::tokenizer::{TokenState};
+use crate::events::Event::Text;
+use crate::tokenizer::TokenState;
+use crate::tokenizer::emitter::{DefaultEmitter, Emitter};
 use crate::tokenizer::reader::FastRead::{InterNeedle, Needle};
 use crate::tokenizer::reader::Reader;
 
-impl<R: BufRead> Tokenizer<R> {
-    pub fn from_reader(reader: R) -> Tokenizer<R> {
+impl<R: BufRead, E: Emitter> Tokenizer<R, E> {
+    pub fn new_with_emitter(reader: R, emitter: E) -> Self {
         Tokenizer {
+            emitter,
             reader,
-            pos: 0,
+            eof: false,
             state: TokenState::Data,
-            events_to_emit: vec![],
-            current_text: vec![],
-            current_tag: vec![],
             #[cfg(feature = "encoding")]
             encoding: ::encoding_rs::UTF_8,
             #[cfg(feature = "encoding")]
             is_encoding_set: false,
         }
+    }
+}
+
+impl<R: BufRead> Tokenizer<R> {
+    pub fn from_reader(reader: R) -> Self {
+        Tokenizer::new_with_emitter(reader, DefaultEmitter::default())
     }
 
     #[inline]
@@ -44,10 +51,9 @@ impl<R: BufRead> Tokenizer<R> {
                         Needle(_) => self.emit_eof(),
                         InterNeedle(txt) => {
                             self.emit_input_characters(txt);
-                        },
-
+                        }
                     }
-                },
+                }
                 TokenState::Tag => {
                     match next_char {
                         b'/' => self.state = TokenState::EndTag,
@@ -56,10 +62,9 @@ impl<R: BufRead> Tokenizer<R> {
                         b'\t' | b'\n' | b' ' | b':' | b'<' | b'>' => {
                             self.emit_character(b'<'); // same as emitting '<' char
                             self.state = TokenState::Data;
-                            self.pos -= 1; //reconsume
                             break self.emit_error(Xml5Error::Eof);
-                        },
-                        _ => {},
+                        }
+                        _ => {}
                     }
                 }
                 _ => {}
@@ -70,7 +75,7 @@ impl<R: BufRead> Tokenizer<R> {
     #[inline]
     fn emit_input_characters(&mut self, mut buf: Vec<u8>)
     {
-        self.current_text.append(&mut buf)
+        todo!()
     }
 
     #[inline]
@@ -82,17 +87,15 @@ impl<R: BufRead> Tokenizer<R> {
     #[inline]
     fn emit_character(&mut self, chr: u8)
     {
-        if Some(&EmitEvent::Text) == self.events_to_emit.last() {
-            self.current_text.push(chr);
-        } else {
-            self.events_to_emit.push(EmitEvent::Text);
-        }
+        todo!()
     }
 
     fn emit_tag(&mut self)
-    {}
+    {
+        todo!()
+    }
 
-    #[inline ]
+    #[inline]
     fn emit_error(&mut self, error: Xml5Error) -> Xml5Result<Event>
     {
         todo!()

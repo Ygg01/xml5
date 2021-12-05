@@ -5,27 +5,24 @@ use encoding_rs::Encoding;
 
 use crate::errors::Xml5Error;
 use crate::events::{EmitEvent, Event};
+use crate::tokenizer::emitter::{DefaultEmitter, Emitter};
 
 mod decoding;
 mod reader;
 mod machine;
+mod emitter;
 
 
-pub struct Tokenizer<R: BufRead> {
+pub struct Tokenizer<R: BufRead, E: Emitter = DefaultEmitter> {
     pub(crate) reader: R,
-    /// position of current character
-    pos: usize,
+    emitter: E,
     /// which state is the tokenizer in
     state: TokenState,
     /*
         Field related to emitting events
      */
-    ///
-    events_to_emit: Vec<EmitEvent>,
-    /// Where fragment of text was start and ends
-    current_text: Vec<u8>,
-    /// Where
-    current_tag: Vec<u8>,
+    /// End of file reached - parsing stops
+    eof: bool,
     /// encoding specified in the xml, or utf8 if none found
     #[cfg(feature = "encoding")]
     encoding: &'static Encoding,
