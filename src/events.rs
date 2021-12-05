@@ -1,5 +1,5 @@
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum Event {
+pub enum Token {
     /// Character data between `Start` and `End` element.
     Text(String),
     /// Start tag (with attributes) `<tag attr="value">`.

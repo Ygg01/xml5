@@ -9,4 +9,4 @@ mod errors;
 mod events;
 
 pub use tokenizer::{Tokenizer};
-pub use crate::events::Event;
+pub use crate::events::Token;

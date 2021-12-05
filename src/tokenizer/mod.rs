@@ -1,7 +1,10 @@
-use std::io::BufRead;
+use std::io::{BufRead, Error};
 
 #[cfg(feature = "encoding_rs")]
 use encoding_rs::Encoding;
+use crate::errors::{Xml5Error, Xml5Result};
+use crate::Token;
+use crate::Token::Eof;
 
 use crate::tokenizer::emitter::{DefaultEmitter, Emitter};
 
@@ -24,6 +27,48 @@ pub struct Tokenizer<R: BufRead, E: Emitter = DefaultEmitter> {
     /// checks if xml5 could identify encoding
     #[cfg(feature = "encoding")]
     is_encoding_set: bool,
+}
+
+
+impl<R: BufRead, E: Emitter> Tokenizer<R, E> {
+    pub fn new_with_emitter(reader: R, emitter: E) -> Self {
+        Tokenizer {
+            emitter,
+            reader,
+            eof: false,
+            state: TokenState::Data,
+            #[cfg(feature = "encoding")]
+            encoding: ::encoding_rs::UTF_8,
+            #[cfg(feature = "encoding")]
+            is_encoding_set: false,
+        }
+    }
+
+    pub fn next_state(&mut self) {
+
+    }
+}
+
+impl<R: BufRead> Tokenizer<R> {
+    pub fn from_reader(reader: R) -> Self {
+        Tokenizer::new_with_emitter(reader, DefaultEmitter::default())
+    }
+}
+
+impl<R: BufRead, E: Emitter> Iterator for Tokenizer<R, E> {
+    type Item = Xml5Result<E::Token>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            if let Some(token) = self.emitter.pop_token() {
+                break Some(Ok(token));
+            } else if !self.eof {
+                self.next_state();
+            } else {
+                return None;
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy)]

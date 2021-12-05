@@ -1,6 +1,6 @@
 extern crate xml5;
 
-use xml5::{Tokenizer, TokenResult, Event};
+use xml5::{Tokenizer, TokenResult, Token};
 
 #[test]
 fn test_xml() {
@@ -9,7 +9,7 @@ fn test_xml() {
     let mut buf = Vec::new();
 
     match reader.read_event(&mut buf) {
-        TokenResult { event: Event::Text(e), .. } => {
+        TokenResult { event: Token::Text(e), .. } => {
             println!("{}", e.to_string());
         }
         _ => {},
