@@ -5,6 +5,7 @@ use encoding_rs::Encoding;
 use crate::errors::{Xml5Error, Xml5Result};
 
 use crate::tokenizer::emitter::{DefaultEmitter, Emitter};
+use crate::tokenizer::reader::{FastRead, Reader};
 
 mod decoding;
 mod reader;
@@ -19,32 +20,14 @@ pub struct Tokenizer<R: BufRead, E: Emitter = DefaultEmitter> {
     state: TokenState,
     /// End of file reached - parsing stops
     eof: bool,
+    /// Buffer of characters to reconsume
+    reconsume_buf: Vec<u8>,
     /// encoding specified in the xml, or utf8 if none found
     #[cfg(feature = "encoding")]
     encoding: &'static Encoding,
     /// checks if xml5 could identify encoding
     #[cfg(feature = "encoding")]
     is_encoding_set: bool,
-}
-
-
-impl<R: BufRead, E: Emitter> Tokenizer<R, E> {
-    pub fn new_with_emitter(reader: R, emitter: E) -> Self {
-        Tokenizer {
-            emitter,
-            reader,
-            eof: false,
-            state: TokenState::Data,
-            #[cfg(feature = "encoding")]
-            encoding: ::encoding_rs::UTF_8,
-            #[cfg(feature = "encoding")]
-            is_encoding_set: false,
-        }
-    }
-
-    fn next_state(&mut self) -> Control {
-        todo!()
-    }
 }
 
 impl<R: BufRead> Tokenizer<R> {
