@@ -6,6 +6,7 @@ use crate::tokenizer::emitter::{DefaultEmitter, Emitter};
 use crate::tokenizer::reader::FastRead::{InterNeedle, Needle};
 use crate::tokenizer::reader::{FastRead, Reader};
 use crate::tokenizer::{Control, TokenState};
+use crate::tokenizer::TokenState::{EndTag, Tag};
 
 impl<R: BufRead, E: Emitter> Tokenizer<R, E> {
     pub fn new_with_emitter(reader: R, emitter: E) -> Self {
@@ -24,7 +25,7 @@ impl<R: BufRead, E: Emitter> Tokenizer<R, E> {
 
     #[inline]
     pub(crate) fn next_state(&mut self) -> Control {
-        let char = match self.consume_next_input() {
+        let next_char = match self.consume_next_input() {
             Ok(None) => {
                 self.eof = true;
                 self.emitter.emit_eof();
@@ -34,7 +35,27 @@ impl<R: BufRead, E: Emitter> Tokenizer<R, E> {
             Err(e) => return Control::Err(e),
         };
         match self.state {
-            TokenState::Data => {}
+            TokenState::Data => {
+                match self.reader.read_fast_until2(b'<', b'&') {
+                    FastRead::Needle(b'&') => self.state = TokenState::CharRefInData,
+                    FastRead::Needle(b'<') => self.state = TokenState::Tag,
+                    FastRead::InterNeedle(text) => self.emitter.emit_chars(text),
+                    _ => self.emitter.emit_eof(),
+                }
+            },
+            TokenState::Tag => {
+                match next_char {
+                    b'/' => self.state = TokenState::EndTag,
+                    b'?' => self.state = TokenState::Pi,
+                    b'!'=> self.state = TokenState::MarkupDecl,
+                    b'\t' | b'\n' | b' ' | b':' | b'<' | b'>' => {
+                        // self.emitter.emit_error();
+                        self.emitter.emit_char('<');
+                        self.state = Tag;
+                    },
+                    _ => {}
+                }
+            },
             _ => {}
         };
         Control::Continue

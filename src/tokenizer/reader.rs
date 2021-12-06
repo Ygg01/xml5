@@ -8,7 +8,7 @@ pub(crate) trait Reader<'r, 'i, B>
         Self: 'i
 {
     fn peek_byte(&mut self) -> Xml5Result<Option<u8>>;
-    fn read_fast_until2(&mut self, needle1: u8, needle2: u8) -> Xml5Result<FastRead>;
+    fn read_fast_until2(&mut self, needle1: u8, needle2: u8) -> FastRead;
 }
 
 impl<'r: 'i, 'i, B: BufRead + 'i> Reader<'r, 'i, B> for B {
@@ -27,10 +27,10 @@ impl<'r: 'i, 'i, B: BufRead + 'i> Reader<'r, 'i, B> for B {
         &mut self,
         needle1: u8,
         needle2: u8,
-    ) -> Xml5Result<FastRead> {
+    ) -> FastRead {
         // If previous memchr was searched until the very needle, needle will be a first element
         match self.peek_byte() {
-            Ok(Some(chr)) if chr == needle1 || chr == needle1 => return Ok(Needle(chr)),
+            Ok(Some(chr)) if chr == needle1 || chr == needle1 => return Needle(chr),
             _ => (),
         };
         let mut read = 0usize;
@@ -40,10 +40,10 @@ impl<'r: 'i, 'i, B: BufRead + 'i> Reader<'r, 'i, B> for B {
         while !done {
             let used = {
                 let available = match self.fill_buf() {
-                    Ok(n) if n.is_empty() => return Ok(FastRead::Needle(b'\0')),
+                    Ok(n) if n.is_empty() => return FastRead::EOF,
                     Ok(n) => n,
                     Err(ref e) if e.kind() == io::ErrorKind::Interrupted => continue,
-                    Err(e) => return Xml5Result::Err(Xml5Error::Io(e)),
+                    Err(_) => return FastRead::EOF,
                 };
 
                 match memchr::memchr2(needle1, needle2, available)
@@ -66,10 +66,10 @@ impl<'r: 'i, 'i, B: BufRead + 'i> Reader<'r, 'i, B> for B {
 
         if read != 0
         {
-            Ok(FastRead::InterNeedle(buf))
+            FastRead::InterNeedle(buf)
         } else {
             // we reached the end somehow
-            Ok(FastRead::Needle(b'\0'))
+            FastRead::Needle(b'\0')
         }
     }
 }
@@ -77,4 +77,5 @@ impl<'r: 'i, 'i, B: BufRead + 'i> Reader<'r, 'i, B> for B {
 pub(crate) enum FastRead {
     Needle(u8),
     InterNeedle(Vec<u8>),
+    EOF,
 }
