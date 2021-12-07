@@ -34,6 +34,7 @@ impl<R: BufRead, E: Emitter> Tokenizer<R, E> {
             Ok(Some(c)) => c,
             Err(e) => return Control::Err(e),
         };
+        let mut amt = 1usize;
         match self.state {
             TokenState::Data => {
                 match self.reader.read_fast_until2(b'<', b'&') {
@@ -42,27 +43,28 @@ impl<R: BufRead, E: Emitter> Tokenizer<R, E> {
                     FastRead::InterNeedle(text) => self.emitter.emit_chars(text),
                     _ => self.emitter.emit_eof(),
                 }
-            },
+            }
             TokenState::Tag => {
                 match next_char {
                     b'/' => self.state = TokenState::EndTag,
                     b'?' => self.state = TokenState::Pi,
-                    b'!'=> self.state = TokenState::MarkupDecl,
-                    b'\t' | b'\n' | b' ' | b':' | b'<' | b'>' => {
-                        // self.emitter.emit_error();
+                    b'!' => self.state = TokenState::MarkupDecl,
+                    b'\t' | b'\r' | b'\n' | b' ' | b':' | b'<' | b'>' => {
+                        self.emitter.emit_error(Xml5Error::UnexpectedSymbol(next_char));
                         self.emitter.emit_char('<');
                         self.state = Tag;
-                    },
+                    }
                     _ => {}
                 }
-            },
+            }
             _ => {}
         };
+        self.reader.consume(amt);
         Control::Continue
     }
 
     fn consume_next_input(&mut self) -> Xml5Result<Option<u8>> {
-        if (!self.reconsume_buf.is_empty()) {
+        if !self.reconsume_buf.is_empty() {
             return Ok(self.reconsume_buf.pop());
         }
         self.reader.peek_byte()

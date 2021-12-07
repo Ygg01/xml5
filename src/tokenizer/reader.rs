@@ -9,6 +9,14 @@ pub(crate) trait Reader<'r, 'i, B>
 {
     fn peek_byte(&mut self) -> Xml5Result<Option<u8>>;
     fn read_fast_until2(&mut self, needle1: u8, needle2: u8) -> FastRead;
+    fn skip_while_true(&mut self, check: fn (u8)->bool) -> Xml5Result<usize>;
+}
+#[inline(always)]
+pub(crate) fn is_whitespace(b: u8) -> bool {
+    match b {
+        b' ' | b'\r' | b'\n' | b'\t' => true,
+        _ => false,
+    }
 }
 
 impl<'r: 'i, 'i, B: BufRead + 'i> Reader<'r, 'i, B> for B {
@@ -70,6 +78,28 @@ impl<'r: 'i, 'i, B: BufRead + 'i> Reader<'r, 'i, B> for B {
         } else {
             // we reached the end somehow
             FastRead::Needle(b'\0')
+        }
+    }
+
+    fn skip_while_true(&mut self, check: fn (u8)->bool) -> Xml5Result<usize> {
+        let mut read = 0usize;
+        loop {
+            break match self.fill_buf() {
+                Ok(n) => {
+                    let count = n.iter()
+                        .position(|b| !check(*b))
+                        .unwrap_or(n.len());
+                    if count > 0 {
+                        self.consume(count);
+                        read += count;
+                        continue;
+                    } else {
+                        Ok(read)
+                    }
+                }
+                Err(ref e) if e.kind() == io::ErrorKind::Interrupted => continue,
+                Err(e) => Err(Xml5Error::Io(e)),
+            };
         }
     }
 }

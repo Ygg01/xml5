@@ -5,7 +5,6 @@ use encoding_rs::Encoding;
 use crate::errors::{Xml5Error, Xml5Result};
 
 use crate::tokenizer::emitter::{DefaultEmitter, Emitter};
-use crate::tokenizer::reader::{FastRead, Reader};
 
 mod decoding;
 mod reader;
