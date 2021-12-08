@@ -25,7 +25,7 @@ impl<R: BufRead, E: Emitter> Tokenizer<R, E> {
 
     #[inline]
     pub(crate) fn next_state(&mut self) -> Control {
-        let next_char = match self.consume_next_input() {
+        let next_char = match self. () {
             Ok(None) => {
                 self.eof = true;
                 self.emitter.emit_eof();
@@ -38,9 +38,9 @@ impl<R: BufRead, E: Emitter> Tokenizer<R, E> {
         match self.state {
             TokenState::Data => {
                 match self.reader.read_fast_until2(b'<', b'&') {
-                    FastRead::Needle(b'&') => self.state = TokenState::CharRefInData,
-                    FastRead::Needle(b'<') => self.state = TokenState::Tag,
-                    FastRead::InterNeedle(text) => self.emitter.emit_chars(text),
+                    Needle(b'&') => self.state = TokenState::CharRefInData,
+                    Needle(b'<') => self.state = TokenState::Tag,
+                    InterNeedle(text) => self.emitter.emit_chars(text),
                     _ => self.emitter.emit_eof(),
                 }
             }

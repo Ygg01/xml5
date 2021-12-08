@@ -26,7 +26,7 @@ impl<'r: 'i, 'i, B: BufRead + 'i> Reader<'r, 'i, B> for B {
                 Ok(n) if n.is_empty() => Ok(None),
                 Ok(n) => Ok(Some(n[0])),
                 Err(ref e) if e.kind() == io::ErrorKind::Interrupted => continue,
-                Err(e) => Err(Xml5Error::Io(e)),
+                Err(e) => Err(Xml5Error::Io(e.to_string())),
             };
         }
     }
@@ -98,7 +98,7 @@ impl<'r: 'i, 'i, B: BufRead + 'i> Reader<'r, 'i, B> for B {
                     }
                 }
                 Err(ref e) if e.kind() == io::ErrorKind::Interrupted => continue,
-                Err(e) => Err(Xml5Error::Io(e)),
+                Err(e) => Err(Xml5Error::Io(e.to_string())),
             };
         }
     }

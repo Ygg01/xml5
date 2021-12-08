@@ -5,11 +5,11 @@ use std::str::Utf8Error;
 /// [`Error`]: enum.Error.html
 pub type Xml5Result<T> = std::result::Result<T, Xml5Error>;
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub enum Xml5Error {
     UnexpectedSymbol(u8),
     Utf8(Utf8Error),
-    Io(::std::io::Error),
+    Io(String),
     NotFound,
     Eof,
 }

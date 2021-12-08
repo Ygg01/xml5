@@ -1,3 +1,5 @@
+use crate::errors::Xml5Error;
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Token {
     /// Character data between `Start` and `End` element.
@@ -20,6 +22,8 @@ pub enum Token {
     DocType(String),
     /// End of XML document.
     Eof,
+    /// Error
+    Error(Xml5Error),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
