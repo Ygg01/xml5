@@ -1,12 +1,22 @@
 use std::io::BufRead;
+use FastRead::EOF;
 
 use crate::{Token, Tokenizer};
 use crate::errors::{Xml5Error, Xml5Result};
+use crate::errors::Xml5Error::{Eof, UnexpectedSymbol};
 use crate::tokenizer::emitter::{DefaultEmitter, Emitter};
 use crate::tokenizer::reader::FastRead::{InterNeedle, Needle};
 use crate::tokenizer::reader::{FastRead, Reader};
 use crate::tokenizer::{Control, TokenState};
-use crate::tokenizer::TokenState::{EndTag, Tag};
+use crate::tokenizer::TokenState::{Data, EndTag, EndTagNameAfter, Tag};
+
+#[inline(always)]
+pub(crate) fn is_(b: u8) -> bool {
+    match b {
+        b'\t' | b'\r' | b'\n' | b' ' | b':' | b'<' | b'>' => true,
+        _ => false,
+    }
+}
 
 impl<R: BufRead, E: Emitter> Tokenizer<R, E> {
     pub fn new_with_emitter(reader: R, emitter: E) -> Self {
@@ -25,13 +35,8 @@ impl<R: BufRead, E: Emitter> Tokenizer<R, E> {
 
     #[inline]
     pub(crate) fn next_state(&mut self) -> Control {
-        let next_char = match self. () {
-            Ok(None) => {
-                self.eof = true;
-                self.emitter.emit_eof();
-                return Control::Eof;
-            }
-            Ok(Some(c)) => c,
+        let next_char = match self.consume_next_input() {
+            Ok(c) => c,
             Err(e) => return Control::Err(e),
         };
         let mut amt = 1usize;
@@ -46,15 +51,59 @@ impl<R: BufRead, E: Emitter> Tokenizer<R, E> {
             }
             TokenState::Tag => {
                 match next_char {
-                    b'/' => self.state = TokenState::EndTag,
-                    b'?' => self.state = TokenState::Pi,
-                    b'!' => self.state = TokenState::MarkupDecl,
-                    b'\t' | b'\r' | b'\n' | b' ' | b':' | b'<' | b'>' => {
-                        self.emitter.emit_error(Xml5Error::UnexpectedSymbol(next_char));
+                    Some(b'/') => self.state = TokenState::EndTag,
+                    Some(b'?') => self.state = TokenState::Pi,
+                    Some(b'!') => self.state = TokenState::MarkupDecl,
+                    None | Some(b'\t') | Some(b'\r') | Some(b'\n')
+                    | Some(b' ') | Some(b':') | Some(b'<') | Some(b'>') => {
+                        self.emitter.emit_error(UnexpectedSymbol(next_char));
                         self.emitter.emit_char('<');
-                        self.state = Tag;
+                        self.state = TokenState::Data;
                     }
-                    _ => {}
+                    Some(c) => {
+                        self.emitter.create_tag(c);
+                        self.state = TokenState::TagName;
+                    }
+                }
+            }
+            TokenState::EndTag => {
+                match next_char {
+                    Some(b'>') => {
+                        self.emitter.emit_short_end_tag();
+                        self.state = TokenState::Data;
+                    }
+                    None | Some(b'\t') | Some(b'\r') | Some(b'\n')
+                    | Some(b' ') | Some(b':') | Some(b'<') => {
+                        self.emitter.emit_error(Xml5Error::UnexpectedSymbol(next_char));
+                        self.emitter.emit_chars("</");
+                        amt = 0;
+                        self.state = TokenState::Data;
+                    }
+                    Some(byte) => {
+                        self.emitter.create_end_tag(byte);
+                        self.state = TokenState::EndTagName;
+                    }
+                }
+            }
+            TokenState::EndTagName => {
+                match next_char {
+                    Some(b'\t') | Some(b'\r') | Some(b'\n')
+                    | Some(b' ') => self.state = EndTagNameAfter,
+                    Some(b'/') => {
+                        self.emitter.emit_error(UnexpectedSymbol(Some(b'/')));
+                        self.state = TokenState::EndTagNameAfter;
+                    },
+                    Some(b'>') => {
+                        self.emitter.emit_token();
+                        self.state = TokenState::Data;
+                    },
+                    Some(byte) => {
+                        self.emitter.append_tag(byte);
+                    },
+                    None => {
+                        self.emitter.emit_error(Eof);
+                        self.emitter.emit_token();
+                    },
                 }
             }
             _ => {}

@@ -3,23 +3,25 @@ use crate::errors::Xml5Error;
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Token {
     /// Character data between `Start` and `End` element.
-    Text(String),
+    Text(Vec<u8>),
     /// Start tag (with attributes) `<tag attr="value">`.
     StartTag(TagAndAttrText),
     /// End tag `</tag>`.
-    EndTag(String),
+    EndTag(Vec<u8>),
+    /// Short tag `</>`
+    ShortTag,
     /// Empty element tag (with attributes) `<tag attr="value" />`.
     EmptyTag(TagAndAttrText),
     /// Comment `<!-- ... -->`.
-    Comment(String),
+    Comment(Vec<u8>),
     /// CData `<![CDATA[...]]>`.
-    CData(String),
+    CData(Vec<u8>),
     /// XML declaration `<?xml ...?>`.
-    Decl(String),
+    Decl(Vec<u8>),
     /// Processing instruction `<?...?>`.
-    PI(String),
+    PI(Vec<u8>),
     /// Doctype `<!DOCTYPE ...>`.
-    DocType(String),
+    DocType(Vec<u8>),
     /// End of XML document.
     Eof,
     /// Error
