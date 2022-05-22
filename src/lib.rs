@@ -3,6 +3,7 @@
 
 #[cfg(feature = "encoding_rs")]
 extern crate encoding_rs;
+extern crate core;
 
 mod tokenizer;
 mod errors;

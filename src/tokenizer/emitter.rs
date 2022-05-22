@@ -9,12 +9,17 @@ pub trait Emitter {
     fn pop_token(&mut self) -> Option<Self::Token>;
     fn flush_text(&mut self);
 
-    fn append_tag(&mut self, byt: u8);
-
-    fn create_end_tag(&mut self, byt: u8);
     fn create_tag(&mut self, byt: u8);
+    fn append_tag<T: AsRef<[u8]>>(&mut self, bytes: T);
+    fn create_end_tag(&mut self, byt: u8);
+
+    fn create_pi_tag(&mut self, byt: u8);
+    fn append_pi_target<T: AsRef<[u8]>>(&mut self, bytes: T);
+    fn append_pi_data<T: AsRef<[u8]>>(&mut self, bytes: T);
+    fn append_pi_data_byte(&mut self, byt: u8);
 
     fn emit_eof(&mut self);
+    fn emit_pi(&mut self);
     fn emit_error(&mut self, err: Xml5Error);
     fn emit_chars<T: AsRef<[u8]>>(&mut self, buf: T);
     fn emit_char(&mut self, byt: char);
@@ -40,6 +45,8 @@ pub struct DefaultEmitter {
     current_characters: Vec<u8>,
     current_tag: Vec<u8>,
     current_token: CurrentToken,
+    current_pi_target: Vec<u8>,
+    current_pi_data: Vec<u8>,
     last_start_tag: Vec<u8>,
     current_attribute: Option<(Vec<u8>, Vec<u8>)>,
     seen_attributes: BTreeSet<Vec<u8>>,
@@ -61,22 +68,42 @@ impl Emitter for DefaultEmitter {
         }
     }
 
-    fn append_tag(&mut self, byt: u8) {
+    fn create_tag(&mut self, byt: u8) {
+        self.flush_text();
         self.current_tag.push(byt);
+    }
+
+    fn append_tag<T: AsRef<[u8]>>(&mut self, bytes: T) {
+        self.current_tag.extend_from_slice(bytes.as_ref());
     }
 
     fn create_end_tag(&mut self, byt: u8) {
         todo!()
     }
 
-    fn create_tag(&mut self, byt: u8) {
-        self.flush_text();
-        self.current_tag.push(byt);
+    fn create_pi_tag(&mut self, byt: u8) {
+       self.current_pi_target.push(byt);
+    }
+
+    fn append_pi_target<T: AsRef<[u8]>>(&mut self, byt: T) {
+        todo!()
+    }
+
+    fn append_pi_data<T: AsRef<[u8]>>(&mut self, byt: T) {
+        todo!()
+    }
+
+    fn append_pi_data_byte(&mut self, byt: u8) {
+        todo!()
     }
 
     fn emit_eof(&mut self) {
         self.flush_text();
         self.tokens_to_emit.push_front(Token::Eof);
+    }
+
+    fn emit_pi(&mut self) {
+        todo!()
     }
 
     fn emit_error(&mut self, err: Xml5Error) {

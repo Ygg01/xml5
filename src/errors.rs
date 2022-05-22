@@ -7,10 +7,11 @@ pub type Xml5Result<T> = std::result::Result<T, Xml5Error>;
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub enum Xml5Error {
-    UnexpectedSymbol(Option<u8>),
+    UnexpectedSymbolOrEof(Option<u8>),
+    UnexpectedSymbol(char),
+    UnexpectedEof,
     Utf8(Utf8Error),
     Io(String),
     NotFound,
-    Eof,
 }
 

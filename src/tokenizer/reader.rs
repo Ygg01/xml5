@@ -1,16 +1,8 @@
 use std::io;
-use std::io::BufRead;
+use std::io::{BufRead, Error, Read};
 use crate::errors::{Xml5Error, Xml5Result};
-use crate::tokenizer::reader::FastRead::Needle;
+use crate::tokenizer::reader::FastRead::{InterNeedle, Char};
 
-pub(crate) trait Reader<'r, 'i, B>
-    where
-        Self: 'i
-{
-    fn peek_byte(&mut self) -> Xml5Result<Option<u8>>;
-    fn read_fast_until2(&mut self, needle1: u8, needle2: u8) -> FastRead;
-    fn skip_while_true(&mut self, check: fn (u8)->bool) -> Xml5Result<usize>;
-}
 #[inline(always)]
 pub(crate) fn is_whitespace(b: u8) -> bool {
     match b {
@@ -19,93 +11,56 @@ pub(crate) fn is_whitespace(b: u8) -> bool {
     }
 }
 
-impl<'r: 'i, 'i, B: BufRead + 'i> Reader<'r, 'i, B> for B {
+pub(crate) trait BufferedInput<'r, 'i, B>
+    where
+        Self: 'i,
+{
+    fn peek_byte(&mut self) -> Xml5Result<Option<u8>>;
+}
+
+impl<'b, 'i, R: BufRead + 'i> BufferedInput<'b, 'i, &'b mut Vec<u8>> for R
+{
     fn peek_byte(&mut self) -> Xml5Result<Option<u8>> {
         loop {
             break match self.fill_buf() {
                 Ok(n) if n.is_empty() => Ok(None),
                 Ok(n) => Ok(Some(n[0])),
                 Err(ref e) if e.kind() == io::ErrorKind::Interrupted => continue,
-                Err(e) => Err(Xml5Error::Io(e.to_string())),
-            };
-        }
-    }
-
-    fn read_fast_until2(
-        &mut self,
-        needle1: u8,
-        needle2: u8,
-    ) -> FastRead {
-        // If previous memchr was searched until the very needle, needle will be a first element
-        match self.peek_byte() {
-            Ok(Some(chr)) if chr == needle1 || chr == needle1 => return Needle(chr),
-            _ => (),
-        };
-        let mut read = 0usize;
-        let mut done = false;
-
-        let mut buf = vec![];
-        while !done {
-            let used = {
-                let available = match self.fill_buf() {
-                    Ok(n) if n.is_empty() => return FastRead::EOF,
-                    Ok(n) => n,
-                    Err(ref e) if e.kind() == io::ErrorKind::Interrupted => continue,
-                    Err(_) => return FastRead::EOF,
-                };
-
-                match memchr::memchr2(needle1, needle2, available)
-                {
-                    // Read until the needle, omitting it
-                    Some(i) => {
-                        buf.extend_from_slice(&available[..i - 1]);
-                        done = true;
-                        i
-                    }
-                    None => {
-                        buf.extend_from_slice(available);
-                        available.len()
-                    }
-                }
-            };
-            self.consume(used);
-            read += used;
-        }
-
-        if read != 0
-        {
-            FastRead::InterNeedle(buf)
-        } else {
-            // we reached the end somehow
-            FastRead::Needle(b'\0')
-        }
-    }
-
-    fn skip_while_true(&mut self, check: fn (u8)->bool) -> Xml5Result<usize> {
-        let mut read = 0usize;
-        loop {
-            break match self.fill_buf() {
-                Ok(n) => {
-                    let count = n.iter()
-                        .position(|b| !check(*b))
-                        .unwrap_or(n.len());
-                    if count > 0 {
-                        self.consume(count);
-                        read += count;
-                        continue;
-                    } else {
-                        Ok(read)
-                    }
-                }
-                Err(ref e) if e.kind() == io::ErrorKind::Interrupted => continue,
-                Err(e) => Err(Xml5Error::Io(e.to_string())),
+                Err(e) => break Err(Xml5Error::Io(e.to_string())),
             };
         }
     }
 }
 
+
+#[inline]
+pub(crate) fn fast_find(needle: &[u8], haystack: &[u8]) -> Option<usize> {
+    #[cfg(feature = "jetscii")]
+    {
+        debug_assert!(needle.len() <= 16);
+        let mut needle_arr = [0; 16];
+        needle_arr[..needle.len()].copy_from_slice(needle);
+        jetscii::Bytes::new(needle_arr, needle.len() as i32, |b| needle.contains(&b)).find(haystack)
+    }
+
+    #[cfg(not(feature = "jetscii"))]
+    {
+        haystack.iter().position(|b| needle.contains(b))
+    }
+}
+
+#[derive(PartialEq, Debug)]
 pub(crate) enum FastRead {
-    Needle(u8),
+    Char(u8),
     InterNeedle(Vec<u8>),
     EOF,
+}
+
+impl FastRead {
+    pub(crate) fn is_ok(&self) -> bool {
+        match self {
+            Char(_) | InterNeedle(_) => true,
+            _ => false
+        }
+    }
 }

@@ -12,15 +12,16 @@ mod machine;
 mod emitter;
 
 
-pub struct Tokenizer<R: BufRead, E: Emitter = DefaultEmitter> {
-    pub(crate) reader: R,
+pub struct Tokenizer<'b, S: BufRead, E: Emitter = DefaultEmitter> {
+    pub(crate) source: S,
+    pub(crate) buffer: &'b mut Vec<u8>,
     emitter: E,
     /// which state is the tokenizer in
     state: TokenState,
     /// End of file reached - parsing stops
     eof: bool,
-    /// Buffer of characters to reconsume
-    reconsume_buf: Vec<u8>,
+    previous_needle: Option<u8>,
+    pos: usize,
     /// encoding specified in the xml, or utf8 if none found
     #[cfg(feature = "encoding")]
     encoding: &'static Encoding,
@@ -29,13 +30,19 @@ pub struct Tokenizer<R: BufRead, E: Emitter = DefaultEmitter> {
     is_encoding_set: bool,
 }
 
-impl<R: BufRead> Tokenizer<R> {
-    pub fn from_reader(reader: R) -> Self {
-        Tokenizer::new_with_emitter(reader, DefaultEmitter::default())
+impl<'a, R: BufRead> Tokenizer<'a, R> {
+    pub fn from_reader(source: R, buffer: &'a mut Vec<u8>) -> Self {
+        Tokenizer::new_with_emitter(source, DefaultEmitter::default(), buffer)
     }
 }
 
-impl<R: BufRead, E: Emitter> Iterator for Tokenizer<R, E> {
+impl<'a> Tokenizer<'a, &'a [u8]> {
+    pub fn from_str(s: &'a str, buffer: &'a mut Vec<u8>) -> Self {
+        Tokenizer::new_with_emitter(s.as_bytes(), DefaultEmitter::default(), buffer)
+    }
+}
+
+impl<'a, R: BufRead, E: Emitter> Iterator for Tokenizer<'a, R, E> {
     type Item = Xml5Result<E::Token>;
 
     fn next(&mut self) -> Option<Self::Item> {

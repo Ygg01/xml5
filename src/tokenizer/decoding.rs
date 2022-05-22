@@ -16,7 +16,7 @@ pub struct Decoder {
 #[cfg(not(feature = "encoding"))]
 pub struct Decoder;
 
-impl<'a, R: BufRead, E:Emitter> Tokenizer<R, E> {
+impl<'a, R: BufRead, E:Emitter> Tokenizer<'a, R, E> {
     #[cfg(feature = "encoding")]
     pub fn decoder(&self) -> Decoder {
         Decoder {
