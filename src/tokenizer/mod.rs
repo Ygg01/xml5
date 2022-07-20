@@ -3,6 +3,7 @@ use std::io::{BufRead};
 #[cfg(feature = "encoding_rs")]
 use encoding_rs::Encoding;
 use crate::errors::{Xml5Error, Xml5Result};
+use crate::Token;
 
 use crate::tokenizer::emitter::{DefaultEmitter, Emitter};
 
@@ -42,13 +43,13 @@ impl<'a> Tokenizer<'a, &'a [u8]> {
     }
 }
 
-impl<'a, R: BufRead, E: Emitter> Iterator for Tokenizer<'a, R, E> {
-    type Item = Xml5Result<E::Token>;
+impl<'a, R: BufRead, E: Emitter<OutToken=Token>> Iterator for Tokenizer<'a, R, E> {
+    type Item = Token;
 
-    fn next(&mut self) -> Option<Self::Item> {
+    fn next(&mut self) -> Option<Token> {
         loop {
             if let Some(token) = self.emitter.pop_token() {
-                break Some(Ok(token));
+                break Some(token);
             } else if !self.eof {
                 match self.next_state() {
                     Control::Continue => (),
@@ -56,7 +57,7 @@ impl<'a, R: BufRead, E: Emitter> Iterator for Tokenizer<'a, R, E> {
                         self.eof = true;
                         self.emitter.emit_eof();
                     }
-                    Control::Err(e) => break Some(Err(e))
+                    Control::Err(e) => break Some(Token::Error(e))
                 }
             } else {
                 break None;

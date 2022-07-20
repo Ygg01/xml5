@@ -62,8 +62,12 @@ impl<'a, S: BufRead, E: Emitter> Tokenizer<'a, S, E> {
 
     #[inline]
     pub(crate) fn next_state(&mut self) -> Control {
-        let mut amt = 0;
+        let mut amt = 1;
         let next_char = match self.source.peek_byte() {
+            Ok(None) => {
+                self.eof = true;
+                return Eof;
+            }
             Ok(x) => x,
             Err(e) => return Control::Err(e)
         };
@@ -102,6 +106,24 @@ impl<'a, S: BufRead, E: Emitter> Tokenizer<'a, S, E> {
                     Some(c) => {
                         self.emitter.create_tag(c);
                         switch_to!(TagName);
+                    }
+                }
+            }
+            TagName => {
+                match self.read_fast_until(&[b'\t', b'\n', b' ', b'>', b'/']) {
+                    Char(b'\t') | Char(b'\n') | Char(b' ') => switch_to!(TagAttrNameBefore),
+                    Char(b'>') => {
+                        self.emitter.emit_start_tag_token();
+                        switch_to!(Data);
+                    },
+                    _ => {
+                        self.emitter.emit_error(UnexpectedEof);
+                        self.emitter.emit_token();
+                        reconsume!(Data);
+                    },
+                    Char(b'/') => {
+                        self.emitter.set_empty_tag();
+                        switch_to!(TagEmpty);
                     }
                 }
             }

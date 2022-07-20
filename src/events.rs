@@ -1,17 +1,14 @@
+use std::collections::BTreeMap;
 use crate::errors::Xml5Error;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Token {
     /// Character data between `Start` and `End` element.
     Text(Vec<u8>),
-    /// Start tag (with attributes) `<tag attr="value">`.
+    /// Start tag (with attributes) `<tag attr="value">` or `<tag attr="value" />`.
     StartTag(TagAndAttrText),
-    /// End tag `</tag>`.
+    /// End tag `</tag>`, or empty tag `</>`
     EndTag(Vec<u8>),
-    /// Short tag `</>`
-    ShortTag,
-    /// Empty element tag (with attributes) `<tag attr="value" />`.
-    EmptyTag(TagAndAttrText),
     /// Comment `<!-- ... -->`.
     Comment(Vec<u8>),
     /// CData `<![CDATA[...]]>`.
@@ -30,6 +27,12 @@ pub enum Token {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TagAndAttrText {
-
+    pub name: TagName,
+    pub self_closing: bool,
+    pub attributes: BTreeMap<TagName, Vec<u8>>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TagName {
+    pub name: Vec<u8>,
+}

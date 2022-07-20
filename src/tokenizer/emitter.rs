@@ -4,34 +4,36 @@ use crate::Token;
 use crate::Token::Text;
 
 pub trait Emitter {
-    type Token;
+    type OutToken;
 
-    fn pop_token(&mut self) -> Option<Self::Token>;
+    fn pop_token(&mut self) -> Option<Self::OutToken>;
     fn flush_text(&mut self);
 
-    fn create_tag(&mut self, byt: u8);
+    fn create_tag(&mut self, ascii: u8);
     fn append_tag<T: AsRef<[u8]>>(&mut self, bytes: T);
-    fn create_end_tag(&mut self, byt: u8);
+    fn create_end_tag(&mut self, ascii: u8);
+    fn set_empty_tag(&mut self);
 
-    fn create_pi_tag(&mut self, byt: u8);
+    fn create_pi_tag(&mut self, ascii: u8);
     fn append_pi_target<T: AsRef<[u8]>>(&mut self, bytes: T);
     fn append_pi_data<T: AsRef<[u8]>>(&mut self, bytes: T);
-    fn append_pi_data_byte(&mut self, byt: u8);
+    fn append_pi_data_byte(&mut self, ascii: u8);
 
     fn emit_eof(&mut self);
     fn emit_pi(&mut self);
     fn emit_error(&mut self, err: Xml5Error);
     fn emit_chars<T: AsRef<[u8]>>(&mut self, buf: T);
-    fn emit_char(&mut self, byt: char);
+    fn emit_char(&mut self, chr: char);
     fn emit_short_end_tag(&mut self);
-    fn emit_token(&mut self);
 }
 
+#[derive(Copy, Clone)]
 enum CurrentToken {
     NoToken,
     StartTag,
     EndTag,
-    ShortTag,
+    ProcessingInstruction,
+    Doctype,
 }
 
 impl Default for CurrentToken {
@@ -54,7 +56,7 @@ pub struct DefaultEmitter {
 }
 
 impl Emitter for DefaultEmitter {
-    type Token = Token;
+    type OutToken = Token;
 
     fn pop_token(&mut self) -> Option<Token> {
         self.tokens_to_emit.pop_back()
@@ -69,7 +71,7 @@ impl Emitter for DefaultEmitter {
     }
 
     fn create_tag(&mut self, byt: u8) {
-        self.flush_text();
+        self.current_token = CurrentToken::StartTag;
         self.current_tag.push(byt);
     }
 
@@ -78,19 +80,27 @@ impl Emitter for DefaultEmitter {
     }
 
     fn create_end_tag(&mut self, byt: u8) {
+        self.current_token = CurrentToken::EndTag;
+        self.current_tag.clear();
+        self.current_tag.push(byt);
+    }
+
+    fn set_empty_tag(&mut self) {
         todo!()
     }
 
     fn create_pi_tag(&mut self, byt: u8) {
-       self.current_pi_target.push(byt);
+        self.current_token = CurrentToken::ProcessingInstruction;
+        self.current_pi_target.clear();
+        self.current_pi_target.push(byt);
     }
 
-    fn append_pi_target<T: AsRef<[u8]>>(&mut self, byt: T) {
-        todo!()
+    fn append_pi_target<T: AsRef<[u8]>>(&mut self, bytes: T) {
+        self.current_pi_target.extend_from_slice(bytes.as_ref());
     }
 
-    fn append_pi_data<T: AsRef<[u8]>>(&mut self, byt: T) {
-        todo!()
+    fn append_pi_data<T: AsRef<[u8]>>(&mut self, bytes: T) {
+        self.current_pi_data.extend_from_slice(bytes.as_ref());
     }
 
     fn append_pi_data_byte(&mut self, byt: u8) {
@@ -98,7 +108,6 @@ impl Emitter for DefaultEmitter {
     }
 
     fn emit_eof(&mut self) {
-        self.flush_text();
         self.tokens_to_emit.push_front(Token::Eof);
     }
 
@@ -114,20 +123,17 @@ impl Emitter for DefaultEmitter {
         self.current_characters.extend_from_slice(&buf.as_ref());
     }
 
-    fn emit_char(&mut self, byt: char) {
-        if byt.is_ascii() {
-            self.current_characters.push(byt as u8);
+    fn emit_char(&mut self, chr: char) {
+        if chr.is_ascii() {
+            self.current_characters.push(chr as u8);
         } else {
-            self.emit_chars(format!("{}", byt));
+            self.emit_chars(format!("{}", chr));
         }
     }
 
     #[inline(always)]
     fn emit_short_end_tag(&mut self) {
-        self.tokens_to_emit.push_front(Token::ShortTag);
-    }
-
-    fn emit_token(&mut self) {
         todo!()
     }
+
 }
