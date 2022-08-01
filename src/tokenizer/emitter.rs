@@ -1,4 +1,5 @@
 use std::collections::{BTreeSet, VecDeque};
+
 use crate::errors::Xml5Error;
 use crate::Token;
 use crate::Token::Text;
@@ -19,11 +20,18 @@ pub trait Emitter {
     fn append_pi_data<T: AsRef<[u8]>>(&mut self, bytes: T);
     fn append_pi_data_byte(&mut self, ascii: u8);
 
+    fn create_comment_token(&mut self);
+    fn emit_comment(&mut self);
+    fn append_to_comment<T: AsRef<[u8]>>(&mut self, bytes: T);
+    fn append_to_comment_data(&mut self, ascii: u8);
+
     fn emit_eof(&mut self);
     fn emit_pi(&mut self);
     fn emit_error(&mut self, err: Xml5Error);
     fn emit_chars<T: AsRef<[u8]>>(&mut self, buf: T);
+    fn emit_token(&mut self);
     fn emit_char(&mut self, chr: char);
+    fn emit_start_tag_token(&mut self);
     fn emit_short_end_tag(&mut self);
 }
 
@@ -107,6 +115,22 @@ impl Emitter for DefaultEmitter {
         todo!()
     }
 
+    fn create_comment_token(&mut self) {
+        todo!()
+    }
+
+    fn emit_comment(&mut self) {
+        todo!()
+    }
+
+    fn append_to_comment<T: AsRef<[u8]>>(&mut self, bytes: T) {
+        todo!()
+    }
+
+    fn append_to_comment_data(&mut self, ascii: u8) {
+        todo!()
+    }
+
     fn emit_eof(&mut self) {
         self.tokens_to_emit.push_front(Token::Eof);
     }
@@ -123,6 +147,10 @@ impl Emitter for DefaultEmitter {
         self.current_characters.extend_from_slice(&buf.as_ref());
     }
 
+    fn emit_token(&mut self) {
+        todo!()
+    }
+
     fn emit_char(&mut self, chr: char) {
         if chr.is_ascii() {
             self.current_characters.push(chr as u8);
@@ -131,9 +159,12 @@ impl Emitter for DefaultEmitter {
         }
     }
 
+    fn emit_start_tag_token(&mut self) {
+        todo!()
+    }
+
     #[inline(always)]
     fn emit_short_end_tag(&mut self) {
         todo!()
     }
-
 }

@@ -50,14 +50,52 @@ impl<'a, S: BufRead, E: Emitter> Tokenizer<'a, S, E> {
                 Err(_) => return EOF,
             };
 
-            let (read,n) = match fast_find(needle, &available[..]) {
+            let (read, n) = match fast_find(needle, &available[..]) {
                 Some(0) => (Char(available[0]), 1),
-                Some(size) => (InterNeedle( available[..size].to_owned()), size),
+                Some(size) => (InterNeedle(available[..size].to_owned()), size),
                 None => (EOF, 0),
             };
             self.source.consume(n);
             return read;
         }
+    }
+
+    #[inline(always)]
+    pub(crate) fn try_read_slice_exact(&mut self, needle: &str) -> bool {
+        self.try_read_slice(needle, true)
+    }
+
+    pub(crate) fn try_read_slice(&mut self, needle: &str, case_sensitive: bool) -> bool {
+        let mut buff: Vec<u8> = Vec::new();
+        while buff.is_empty() {
+            match self.source.fill_buf() {
+                Ok(n) if n.is_empty() => return false,
+                Ok(n) => buff.extend_from_slice(n),
+                Err(ref e) if e.kind() == io::ErrorKind::Interrupted => continue,
+                Err(_) => return false,
+            };
+        }
+
+        if buff.len() < needle.len() {
+            return false;
+        }
+
+        let read = if case_sensitive {
+            buff[0..needle.len()].starts_with(needle.as_bytes())
+        } else {
+            for (pos, x) in needle.as_bytes().iter().enumerate()
+            {
+                if buff[pos].to_ascii_lowercase() != x.to_ascii_lowercase() {
+                    false;
+                }
+            }
+            true
+        };
+
+        if read {
+            self.source.consume(needle.len());
+        }
+        read
     }
 
     #[inline]
@@ -77,7 +115,9 @@ impl<'a, S: BufRead, E: Emitter> Tokenizer<'a, S, E> {
         }
 
         macro_rules! reconsume {
-            ($state:expr) => { amt = 0; self.state = $state };
+            ($state:expr) => { {
+                amt= 0; self.state = $state}
+            };
         }
 
 
@@ -115,12 +155,12 @@ impl<'a, S: BufRead, E: Emitter> Tokenizer<'a, S, E> {
                     Char(b'>') => {
                         self.emitter.emit_start_tag_token();
                         switch_to!(Data);
-                    },
+                    }
                     _ => {
                         self.emitter.emit_error(UnexpectedEof);
                         self.emitter.emit_token();
                         reconsume!(Data);
-                    },
+                    }
                     Char(b'/') => {
                         self.emitter.set_empty_tag();
                         switch_to!(TagEmpty);
@@ -231,7 +271,98 @@ impl<'a, S: BufRead, E: Emitter> Tokenizer<'a, S, E> {
                     _ => { reconsume!(PiData); }
                 }
             }
-            // TODO Markup decl
+            MarkupDecl => {
+                if self.try_read_slice_exact("--") {
+                    self.emitter.create_comment_token();
+                    switch_to!(CommentStart)
+                } else if self.try_read_slice("DOCTYPE", false) {
+                    switch_to!(Doctype)
+                } else if self.try_read_slice_exact("[CDATA[") {
+                    switch_to!(Cdata)
+                } else {
+                    self.emitter.emit_error(Xml5Error::IncorrectlyOpenedComment);
+                    switch_to!(BogusComment)
+                }
+            }
+            CommentStart => {
+                match next_char {
+                    Some(b'-') => switch_to!(CommentStartDash),
+                    Some(b'>') => {
+                        self.emitter.emit_error(Xml5Error::AbruptClosingEmptyComment);
+                        switch_to!(Data);
+                        self.emitter.emit_comment();
+                    }
+                    _ => {
+                        reconsume!(Comment);
+                    }
+                }
+            }
+            CommentStartDash => {
+                match next_char {
+                    Some(b'-') => switch_to!(CommentEnd),
+                    Some(b'>') => {
+                        self.emitter.emit_error(Xml5Error::AbruptClosingEmptyComment);
+                        switch_to!(Data);
+                        self.emitter.emit_comment();
+                    }
+                    None => {
+                        self.emitter.emit_error(Xml5Error::EofInComment);
+                        self.emitter.emit_comment();
+                        self.emitter.emit_eof();
+                    }
+                    _ => {
+                        self.emitter.append_to_comment_data(b'-');
+                        reconsume!(Comment);
+                    }
+                }
+            }
+            Comment => {
+                match self.read_fast_until(&[b'<', b'-']) {
+                    InterNeedle(buf) => {
+                        self.emitter.append_to_comment(buf);
+                    }
+                    Char(b'<') => {
+                        self.emitter.append_to_comment_data(b'<');
+                        switch_to!(CommentLessThan)
+                    }
+                    Char(b'-') => switch_to!(CommentEndDash),
+                    EOF => {
+                        self.emitter.emit_error(Xml5Error::EofInComment);
+                        self.emitter.emit_comment();
+                        self.emitter.emit_eof();
+                    }
+                }
+            }
+            CommentLessThan => {
+                match next_char {
+                    Some(b'!') => {
+                        self.emitter.append_to_comment_data(b'!');
+                        switch_to!(CommentLessThanBang);
+                    }
+                    Some(b'<') => {
+                        self.emitter.append_to_comment_data(b'<');
+                    }
+                    _ => { reconsume!(Comment); }
+                }
+            }
+            CommentLessThanBang => {
+                match next_char {
+                    Some(b'-') => switch_to!(CommentLessThanBangDash),
+                    _ => { reconsume!(Comment); }
+                }
+            }
+            CommentLessThanBangDash => {
+                match next_char {
+                    Some(b'-') => switch_to!(CommentLessThanBangDashDash),
+                    _ =>  {reconsume!(CommentEndDash);}
+                }
+            }
+            CommentLessThanBangDashDash => {
+                match next_char {
+                    Some(b'>') => switch_to!(CommentEnd),
+                    _ => { reconsume!(CommentEndDash); }
+                }
+            }
             _ => {}
         };
         self.source.consume(amt);
@@ -261,5 +392,18 @@ fn test_read_until2() {
     assert_eq!(Char(b'x'), xml.read_fast_until(&[b'x']));
     assert_eq!(Char(b'y'), xml.read_fast_until(&[b'y']));
     assert_eq!(Char(b'z'), xml.read_fast_until(&[b'z']));
+}
+
+#[test]
+fn test_try_read_slice1() {
+    let source = "xyz_abc";
+    let mut buf = vec![];
+    let mut xml = Tokenizer::from_str(source, &mut buf);
+
+    assert!(!xml.try_read_slice("?A?", true));
+    assert!(xml.try_read_slice("xyz", true));
+    assert!(!xml.try_read_slice("?A?", true));
+    assert!(xml.try_read_slice("_AbC", false));
+    assert!(!xml.try_read_slice("_AbC", false));
 }
 
