@@ -1,12 +1,12 @@
 use std::io;
 use std::io::BufRead;
+use std::num::IntErrorKind::Empty;
 use std::str::from_utf8;
 
 use FastRead::EOF;
 
 use crate::{Token, Tokenizer};
 use crate::errors::{Xml5Error, Xml5Result};
-use crate::errors::Xml5Error::{UnexpectedEof, UnexpectedSymbol, UnexpectedSymbolOrEof};
 use crate::Token::Error;
 use crate::tokenizer::{Control, TokenState};
 use crate::tokenizer::Control::Eof;
@@ -16,7 +16,7 @@ use crate::tokenizer::reader::FastRead::{Char, InterNeedle};
 use crate::tokenizer::TokenState::{*};
 
 #[inline(always)]
-pub(crate) fn is_(b: u8) -> bool {
+pub(crate) fn is_ws(b: u8) -> bool {
     match b {
         b'\t' | b'\r' | b'\n' | b' ' | b':' | b'<' | b'>' => true,
         _ => false,
@@ -115,8 +115,8 @@ impl<'a, S: BufRead, E: Emitter> Tokenizer<'a, S, E> {
         }
 
         macro_rules! reconsume {
-            ($state:expr) => { {
-                amt= 0; self.state = $state}
+            ($state:expr) => {
+                {amt= 0; self.state = $state;}
             };
         }
 
@@ -126,21 +126,21 @@ impl<'a, S: BufRead, E: Emitter> Tokenizer<'a, S, E> {
             Data => {
                 match self.read_fast_until(&[b'<', b'&']) {
                     Char(b'&') => switch_to!(CharRefInData),
-                    Char(b'<') => switch_to!( Tag),
+                    Char(b'<') => switch_to!( TagOpen),
                     InterNeedle(text) => self.emitter.emit_chars(text),
                     _ => self.emitter.emit_eof(),
                 }
             }
-            // Todo char ref
-            Tag => {
+            // TODO: char ref
+            TagOpen => {
                 match next_char {
-                    Some(b'/') => switch_to!(EndTag),
+                    Some(b'/') => switch_to!(EndTagOpen),
                     Some(b'?') => switch_to!(Pi),
                     Some(b'!') => switch_to!(MarkupDecl),
-                    None | Some(b'\t') | Some(b'\r') | Some(b'\n')
+                    None | Some(b'\t') | Some(b'\n')
                     | Some(b' ') | Some(b':') | Some(b'<') | Some(b'>') => {
-                        self.emitter.emit_error(UnexpectedSymbolOrEof(next_char));
-                        self.emitter.emit_char('<');
+                        self.emitter.emit_error(Xml5Error::UnexpectedSymbolOrEof(next_char));
+                        self.emitter.emit_char(b'<');
                         switch_to!(Data);
                     }
                     Some(c) => {
@@ -149,33 +149,15 @@ impl<'a, S: BufRead, E: Emitter> Tokenizer<'a, S, E> {
                     }
                 }
             }
-            TagName => {
-                match self.read_fast_until(&[b'\t', b'\n', b' ', b'>', b'/']) {
-                    Char(b'\t') | Char(b'\n') | Char(b' ') => switch_to!(TagAttrNameBefore),
-                    Char(b'>') => {
-                        self.emitter.emit_start_tag_token();
-                        switch_to!(Data);
-                    }
-                    _ => {
-                        self.emitter.emit_error(UnexpectedEof);
-                        self.emitter.emit_token();
-                        reconsume!(Data);
-                    }
-                    Char(b'/') => {
-                        self.emitter.set_empty_tag();
-                        switch_to!(TagEmpty);
-                    }
-                }
-            }
-            EndTag => {
+            EndTagOpen => {
                 match next_char {
                     Some(b'>') => {
                         self.emitter.emit_short_end_tag();
                         switch_to!(Data);
                     }
-                    None | Some(b'\t') | Some(b'\r') | Some(b'\n')
+                    None | Some(b'\t') | Some(b'\n')
                     | Some(b' ') | Some(b':') | Some(b'<') => {
-                        self.emitter.emit_error(UnexpectedSymbolOrEof(next_char));
+                        self.emitter.emit_error(Xml5Error::UnexpectedSymbolOrEof(next_char));
                         self.emitter.emit_chars("</");
                         reconsume!(Data);
                     }
@@ -186,21 +168,21 @@ impl<'a, S: BufRead, E: Emitter> Tokenizer<'a, S, E> {
                 }
             }
             EndTagName => {
-                match self.read_fast_until(&[b'\t', b'\r', b'\n', b' ', b'/', b'>']) {
-                    Char(b'\t') | Char(b'\r') | Char(b'\n') | Char(b' ') => {
+                match self.read_fast_until(&[b'\t', b'\n', b' ', b'/', b'>']) {
+                    Char(b'\t') | Char(b'\n') | Char(b' ') => {
                         switch_to!(EndTagNameAfter);
                     }
                     Char(b'/') => {
-                        self.emitter.emit_error(UnexpectedSymbol('/'));
+                        self.emitter.emit_error(Xml5Error::UnexpectedSymbol('/'));
                         switch_to!(EndTagNameAfter);
                     }
                     Char(b'>') => {
-                        self.emitter.emit_char('>');
+                        self.emitter.emit_char(b'>');
                         switch_to!(Data);
                     }
                     InterNeedle(x) => self.emitter.append_tag(x),
                     _ => {
-                        self.emitter.emit_error(UnexpectedEof);
+                        self.emitter.emit_error(Xml5Error::UnexpectedEof);
                     }
                 }
             }
@@ -210,20 +192,117 @@ impl<'a, S: BufRead, E: Emitter> Tokenizer<'a, S, E> {
                         self.emitter.emit_token();
                         switch_to!(Data);
                     }
-                    Some(b' ') | Some(b'\r') | Some(b'\n') | Some(b'\t') => {}
+                    Some(b' ') | Some(b'\n') | Some(b'\t') => {}
                     None => {
-                        self.emitter.emit_error(UnexpectedSymbolOrEof(None));
+                        self.emitter.emit_error(Xml5Error::UnexpectedSymbolOrEof(None));
                         reconsume!(Data);
                     }
                     Some(x) => {
-                        self.emitter.emit_error(UnexpectedSymbol(x as char));
+                        self.emitter.emit_error(Xml5Error::UnexpectedSymbol(x as char));
                     }
                 }
             }
+            TagName => {
+                match self.read_fast_until(&[b'\t', b'\n', b' ', b'>', b'/']) {
+                    Char(b'\t') | Char(b'\n') | Char(b' ') => switch_to!(TagAttrNameBefore),
+                    Char(b'>') => {
+                        self.emitter.emit_tag();
+                        switch_to!(Data);
+                    }
+                    Char(b'/') => {
+                        self.emitter.set_empty_tag();
+                        switch_to!(EmptyTag);
+                    }
+                    InterNeedle(buf) => {
+                        self.emitter.append_tag(buf);
+                    }
+                    _ => {
+                        self.emitter.emit_error(Xml5Error::EofInTag);
+                        self.emitter.emit_token();
+                        reconsume!(Data);
+                    }
+                }
+            }
+            EmptyTag => {
+                match next_char {
+                    Some(b'>') => {
+                        self.emitter.emit_tag();
+                        switch_to!(Data);
+                    }
+                    _ => reconsume!(TagAttrValueBefore)
+                }
+            }
+            TagAttrNameBefore => {
+                match next_char {
+                    Some(b't') | Some(b't') | Some(b't') => (),
+                    Some(b'>') => {
+                        self.emitter.emit_token();
+                        switch_to!(Data);
+                    },
+                    Some(b'/') => {
+                        self.emitter.set_empty_tag();
+                        switch_to!(EmptyTag);
+                    },
+                    Some(b':') => self.emitter.emit_error(Xml5Error::ColonBeforeAttrName),
+                    None => {
+                        self.emitter.emit_error(Xml5Error::EofInTag);
+                        self.emitter.emit_token();
+                        reconsume!(Data);
+                    }
+                    Some(bit) => {
+                        self.emitter.create_attr(bit);
+                        switch_to!(TagAttrName);
+                    }
+                }
+            }
+            TagAttrName => {
+                match self.read_fast_until(&[b'\t', b'\n', b' ', b'=', b'>',  b'/']) {
+                    Char(b'\t') | Char(b'\n') | Char(b' ') => switch_to!(TagAttrValueBefore),
+                    Char(b'=') => switch_to!(TagAttrValueBefore),
+                    Char(b'>') => {
+                        self.emitter.emit_tag();
+                        switch_to!(Data);
+                    }
+                    Char(b'/') => {
+                        self.emitter.set_empty_tag();
+                        switch_to!(EmptyTag);
+                    }
+                    EOF | _ => {
+                        self.emitter.emit_error(Xml5Error::EofInTag);
+                        self.emitter.emit_tag();
+                        reconsume!(Data);
+                    }
+                }
+            }
+            TagAttrNameAfter => {
+                match next_char {
+                    Some(b'\t') | Some(b'\n') | Some(b' ') => (),
+                    Some(b'=') => switch_to!(TagAttrValueBefore),
+                    Some(b'>') => {
+                        self.emitter.emit_tag();
+                        switch_to!(EmptyTag);
+                    },
+                    Some(b'/') => {
+                        self.set_empty_tag();
+                        switch_to!(EmptyTag);
+                    },
+                    None => {
+                        elf.emitter.emit_error(Xml5Error::EofInTag);
+                        self.emitter.emit_tag();
+                        reconsume!(Data);
+                    }
+                    Some(byt) => {
+                        self.emitter.create_attr(byt);
+                        switch_to!(TagAttrName)
+                    }
+                }
+            }
+            // TODO Attr
+
             Pi => {
                 match next_char {
-                    None | Some(b' ') | Some(b'\r') | Some(b'\n') | Some(b'\t') => {
-                        self.emitter.emit_error(UnexpectedSymbolOrEof(next_char));
+                    None | Some(b' ') | Some(b'\n') | Some(b'\t') => {
+                        self.emitter.emit_error(Xml5Error::UnexpectedSymbolOrEof(next_char));
                         reconsume!(BogusComment);
                     }
                     Some(x) => {
@@ -233,21 +312,21 @@ impl<'a, S: BufRead, E: Emitter> Tokenizer<'a, S, E> {
                 }
             }
             PiTarget => {
-                match self.read_fast_until(&[b'\t', b'\r', b'\n', b' ']) {
-                    Char(b'\t') | Char(b'\r') | Char(b'\n') | Char(b' ') => switch_to!(PiTargetAfter),
+                match self.read_fast_until(&[b'\t', b'\n', b' ']) {
+                    Char(b'\t') | Char(b'\n') | Char(b' ') => switch_to!(PiTargetAfter),
                     Char(b'?') => switch_to!(PiAfter),
                     InterNeedle(x) => self.emitter.append_pi_target(x),
                     _ => {
                         self.emitter.emit_pi();
-                        self.emitter.emit_error(UnexpectedEof);
+                        self.emitter.emit_error(Xml5Error::UnexpectedEof);
                         reconsume!(Data);
                     }
                 }
             }
             PiTargetAfter => {
                 match next_char {
-                    Some(b'\t') | Some(b'\n') | Some(b'\r') | Some(b' ') => {}
-                    _ => { reconsume!(PiData); }
+                    Some(b'\t') | Some(b'\n') | Some(b' ') => {}
+                    _ => reconsume!(PiData),
                 }
             }
             PiData => {
@@ -255,7 +334,7 @@ impl<'a, S: BufRead, E: Emitter> Tokenizer<'a, S, E> {
                     Char(b'?') => switch_to!(PiAfter),
                     InterNeedle(x) => self.emitter.append_pi_data(x),
                     _ => {
-                        self.emitter.emit_error(UnexpectedEof);
+                        self.emitter.emit_error(Xml5Error::UnexpectedEof);
                         self.emitter.emit_pi();
                         reconsume!(Data);
                     }
@@ -268,7 +347,7 @@ impl<'a, S: BufRead, E: Emitter> Tokenizer<'a, S, E> {
                         switch_to!(Data);
                     }
                     Some(b'?') => self.emitter.append_pi_data_byte(b'?'),
-                    _ => { reconsume!(PiData); }
+                    _ => reconsume!(PiData),
                 }
             }
             MarkupDecl => {
@@ -292,9 +371,7 @@ impl<'a, S: BufRead, E: Emitter> Tokenizer<'a, S, E> {
                         switch_to!(Data);
                         self.emitter.emit_comment();
                     }
-                    _ => {
-                        reconsume!(Comment);
-                    }
+                    _ => reconsume!(Comment),
                 }
             }
             CommentStartDash => {
@@ -326,7 +403,7 @@ impl<'a, S: BufRead, E: Emitter> Tokenizer<'a, S, E> {
                         switch_to!(CommentLessThan)
                     }
                     Char(b'-') => switch_to!(CommentEndDash),
-                    EOF => {
+                    _ => {
                         self.emitter.emit_error(Xml5Error::EofInComment);
                         self.emitter.emit_comment();
                         self.emitter.emit_eof();
@@ -342,27 +419,122 @@ impl<'a, S: BufRead, E: Emitter> Tokenizer<'a, S, E> {
                     Some(b'<') => {
                         self.emitter.append_to_comment_data(b'<');
                     }
-                    _ => { reconsume!(Comment); }
+                    _ => reconsume!(Comment),
                 }
             }
             CommentLessThanBang => {
                 match next_char {
                     Some(b'-') => switch_to!(CommentLessThanBangDash),
-                    _ => { reconsume!(Comment); }
+                    _ => reconsume!(Comment),
                 }
             }
             CommentLessThanBangDash => {
                 match next_char {
                     Some(b'-') => switch_to!(CommentLessThanBangDashDash),
-                    _ =>  {reconsume!(CommentEndDash);}
+                    _ => reconsume!(CommentEndDash),
                 }
             }
             CommentLessThanBangDashDash => {
                 match next_char {
-                    Some(b'>') => switch_to!(CommentEnd),
-                    _ => { reconsume!(CommentEndDash); }
+                    Some(b'>') | None => switch_to!(CommentEnd),
+                    _ => reconsume!(CommentEndDash),
                 }
             }
+            CommentEndDash => {
+                match next_char {
+                    Some(b'-') => switch_to!(CommentEnd),
+                    None => {
+                        self.emitter.emit_error(Xml5Error::EofInComment);
+                        self.emitter.emit_comment();
+                        self.emitter.emit_eof();
+                    },
+                    _ => {
+                        self.emitter.append_to_comment_data(b'-');
+                        reconsume!(Comment);
+                    }
+                }
+            }
+            CommentEnd => {
+                match next_char {
+                    Some(b'>') => {
+                        switch_to!(Data);
+                        self.emitter.emit_comment();
+                    },
+                    Some(b'!') => switch_to!(CommentEndBang),
+                    Some(b'-') => self.emitter.append_to_comment_data(b'-'),
+                    None => {
+                        self.emitter.emit_error(Xml5Error::EofInComment);
+                        self.emitter.emit_comment();
+                        self.emitter.emit_eof();
+                    },
+                    _ => {
+                        self.emitter.append_to_comment("--");
+                        reconsume!(Comment);
+                    }
+                }
+            }
+            CommentEndBang => {
+                match next_char {
+                    Some(b'-') => {
+                        self.emitter.append_to_comment("-!");
+                        switch_to!(CommentEndDash);
+                    }
+                    Some(b'>') => {
+                        self.emitter.emit_error(Xml5Error::GreaterThanInComment);
+                        switch_to!(Data);
+                        self.emitter.emit_comment();
+                    }
+                    None => {
+                        self.emitter.emit_error(Xml5Error::EofInComment);
+                        self.emitter.emit_comment();
+                        self.emitter.emit_eof();
+                    }
+                    _ => {
+                        self.emitter.append_to_comment("--");
+                        reconsume!(Comment)
+                    }
+                }
+            }
+            Cdata => {
+                match self.read_fast_until(&[b']']) {
+                    Char(b']') => switch_to!(CdataBracket),
+                    InterNeedle(buf) => self.emitter.emit_chars(buf),
+                    EOF | _ => {
+                        self.emitter.emit_error(Xml5Error::EofInCdata);
+                        reconsume!(Data);
+                    }
+                }
+            }
+            CdataBracket => {
+                match next_char {
+                    Some(b']') => switch_to!(CdataEnd),
+                    None => {
+                        self.emitter.emit_error(Xml5Error::EofInCdata);
+                        reconsume!(Data);
+                    },
+                    Some(chr) => {
+                        self.emitter.emit_char(b']');
+                        self.emitter.emit_char(chr);
+                        switch_to!(CdataBracket);
+                    }
+                }
+            },
+            CdataEnd => {
+                match next_char {
+                    Some(b'>') => switch_to!(Data),
+                    Some(b']') => self.emitter.emit_char(b']'),
+                    None => {
+                        self.emitter.emit_error(Xml5Error::EofInCdata);
+                        reconsume!(Data);
+                    },
+                    Some(chr) => {
+                        self.emitter.emit_chars("]]");
+                        self.emitter.emit_char(chr);
+                        switch_to!(Cdata);
+                    }
+                }
+            },
+            // TODO DOCTYPE
             _ => {}
         };
         self.source.consume(amt);

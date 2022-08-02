@@ -14,6 +14,7 @@ pub trait Emitter {
     fn append_tag<T: AsRef<[u8]>>(&mut self, bytes: T);
     fn create_end_tag(&mut self, ascii: u8);
     fn set_empty_tag(&mut self);
+    fn create_attr(&mut self, ascii: u8);
 
     fn create_pi_tag(&mut self, ascii: u8);
     fn append_pi_target<T: AsRef<[u8]>>(&mut self, bytes: T);
@@ -28,11 +29,10 @@ pub trait Emitter {
     fn emit_eof(&mut self);
     fn emit_pi(&mut self);
     fn emit_error(&mut self, err: Xml5Error);
+    fn emit_char(&mut self, chr: u8);
     fn emit_chars<T: AsRef<[u8]>>(&mut self, buf: T);
     fn emit_token(&mut self);
-    fn emit_char(&mut self, chr: char);
-    fn emit_start_tag_token(&mut self);
-    fn emit_short_end_tag(&mut self);
+    fn emit_tag(&mut self);
 }
 
 #[derive(Copy, Clone)]
@@ -97,6 +97,10 @@ impl Emitter for DefaultEmitter {
         todo!()
     }
 
+    fn create_attr(&mut self, ascii: u8) {
+        todo!()
+    }
+
     fn create_pi_tag(&mut self, byt: u8) {
         self.current_token = CurrentToken::ProcessingInstruction;
         self.current_pi_target.clear();
@@ -143,6 +147,14 @@ impl Emitter for DefaultEmitter {
         self.tokens_to_emit.push_front(Token::Error(err));
     }
 
+    fn emit_char(&mut self, chr: u8) {
+        if chr.is_ascii() {
+            self.current_characters.push(chr as u8);
+        } else {
+            self.emit_chars(format!("{}", chr));
+        }
+    }
+
     fn emit_chars<T: AsRef<[u8]>>(&mut self, buf: T) {
         self.current_characters.extend_from_slice(&buf.as_ref());
     }
@@ -151,20 +163,8 @@ impl Emitter for DefaultEmitter {
         todo!()
     }
 
-    fn emit_char(&mut self, chr: char) {
-        if chr.is_ascii() {
-            self.current_characters.push(chr as u8);
-        } else {
-            self.emit_chars(format!("{}", chr));
-        }
-    }
 
-    fn emit_start_tag_token(&mut self) {
-        todo!()
-    }
-
-    #[inline(always)]
-    fn emit_short_end_tag(&mut self) {
+    fn emit_tag(&mut self) {
         todo!()
     }
 }
