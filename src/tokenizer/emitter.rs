@@ -3,6 +3,7 @@ use std::collections::{BTreeSet, VecDeque};
 use crate::errors::Xml5Error;
 use crate::Token;
 use crate::Token::Text;
+use crate::tokenizer::DoctypeKind;
 
 pub trait Emitter {
     type OutToken;
@@ -15,11 +16,18 @@ pub trait Emitter {
     fn create_end_tag(&mut self, ascii: u8);
     fn set_empty_tag(&mut self);
     fn create_attr(&mut self, ascii: u8);
+    fn push_attr_value(&mut self, ascii: u8);
+    fn push_attr_values<T: AsRef<[u8]>>(&mut self, bytes: T);
 
     fn create_pi_tag(&mut self, ascii: u8);
     fn append_pi_target<T: AsRef<[u8]>>(&mut self, bytes: T);
     fn append_pi_data<T: AsRef<[u8]>>(&mut self, bytes: T);
     fn append_pi_data_byte(&mut self, ascii: u8);
+
+    fn create_doctype(&mut self);
+    fn append_doctype_name(&mut self, ascii: u8);
+    fn append_doctype_id<T: AsRef<[u8]>>(&mut self, bytes: T);
+    fn clear_doctype_id(&mut self, doctype: DoctypeKind);
 
     fn create_comment_token(&mut self);
     fn emit_comment(&mut self);
@@ -31,8 +39,8 @@ pub trait Emitter {
     fn emit_error(&mut self, err: Xml5Error);
     fn emit_char(&mut self, chr: u8);
     fn emit_chars<T: AsRef<[u8]>>(&mut self, buf: T);
-    fn emit_token(&mut self);
     fn emit_tag(&mut self);
+    fn emit_doctype(&mut self);
 }
 
 #[derive(Copy, Clone)]
@@ -101,6 +109,14 @@ impl Emitter for DefaultEmitter {
         todo!()
     }
 
+    fn push_attr_value(&mut self, ascii: u8) {
+        todo!()
+    }
+
+    fn push_attr_values<T: AsRef<[u8]>>(&mut self, bytes: T) {
+        todo!()
+    }
+
     fn create_pi_tag(&mut self, byt: u8) {
         self.current_token = CurrentToken::ProcessingInstruction;
         self.current_pi_target.clear();
@@ -116,6 +132,22 @@ impl Emitter for DefaultEmitter {
     }
 
     fn append_pi_data_byte(&mut self, byt: u8) {
+        todo!()
+    }
+
+    fn create_doctype(&mut self) {
+        todo!()
+    }
+
+    fn append_doctype_name(&mut self, ascii: u8) {
+        todo!()
+    }
+
+    fn append_doctype_id<T: AsRef<[u8]>>(&mut self, bytes: T) {
+        todo!()
+    }
+
+    fn clear_doctype_id(&mut self, doctype: DoctypeKind) {
         todo!()
     }
 
@@ -155,16 +187,16 @@ impl Emitter for DefaultEmitter {
         }
     }
 
+
     fn emit_chars<T: AsRef<[u8]>>(&mut self, buf: T) {
         self.current_characters.extend_from_slice(&buf.as_ref());
     }
 
-    fn emit_token(&mut self) {
+    fn emit_tag(&mut self) {
         todo!()
     }
 
-
-    fn emit_tag(&mut self) {
+    fn emit_doctype(&mut self) {
         todo!()
     }
 }

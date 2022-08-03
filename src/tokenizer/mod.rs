@@ -21,7 +21,7 @@ pub struct Tokenizer<'b, S: BufRead, E: Emitter = DefaultEmitter> {
     state: TokenState,
     /// End of file reached - parsing stops
     eof: bool,
-    previous_needle: Option<u8>,
+    allowed_char: Option<u8>,
     pos: usize,
     /// encoding specified in the xml, or utf8 if none found
     #[cfg(feature = "encoding")]
@@ -76,7 +76,7 @@ pub(crate) enum Control {
 #[doc(hidden)]
 enum TokenState {
     Data,
-    CharRefInData,
+    CharRefInData(AttrValueKind),
     TagOpen,
     EndTagOpen,
     EndTagName,
@@ -100,6 +100,7 @@ enum TokenState {
     Cdata,
     CdataBracket,
     CdataEnd,
+    BogusComment,
     TagName,
     EmptyTag,
     TagAttrNameBefore,
@@ -118,8 +119,7 @@ enum TokenState {
     AfterDoctypeIdentifier(DoctypeKind),
     BetweenDoctypePublicAndSystemIdentifiers,
     BogusDoctype,
-    BogusComment,
-    Quiescent,
+
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -131,7 +131,6 @@ pub enum AttrValueKind {
 }
 
 #[derive(Debug, Clone, Copy)]
-#[doc(hidden)]
 pub enum DoctypeKind {
     Public,
     System,

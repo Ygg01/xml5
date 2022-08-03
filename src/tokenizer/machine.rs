@@ -9,7 +9,9 @@ use crate::{Token, Tokenizer};
 use crate::errors::{Xml5Error, Xml5Result};
 use crate::Token::Error;
 use crate::tokenizer::{Control, TokenState};
+use crate::tokenizer::AttrValueKind::{DoubleQuoted, SingleQuoted, Unquoted};
 use crate::tokenizer::Control::Eof;
+use crate::tokenizer::DoctypeKind::{Public, System};
 use crate::tokenizer::emitter::{DefaultEmitter, Emitter};
 use crate::tokenizer::reader::{BufferedInput, fast_find, FastRead};
 use crate::tokenizer::reader::FastRead::{Char, InterNeedle};
@@ -30,7 +32,7 @@ impl<'a, S: BufRead, E: Emitter> Tokenizer<'a, S, E> {
             source,
             buffer,
             eof: false,
-            previous_needle: None,
+            allowed_char: None,
             pos: 0,
             state: Data,
             #[cfg(feature = "encoding")]
@@ -125,13 +127,12 @@ impl<'a, S: BufRead, E: Emitter> Tokenizer<'a, S, E> {
         match self.state {
             Data => {
                 match self.read_fast_until(&[b'<', b'&']) {
-                    Char(b'&') => switch_to!(CharRefInData),
+                    Char(b'&') => switch_to!(CharRefInData(Unquoted)),
                     Char(b'<') => switch_to!( TagOpen),
                     InterNeedle(text) => self.emitter.emit_chars(text),
                     _ => self.emitter.emit_eof(),
                 }
             }
-            // TODO: char ref
             TagOpen => {
                 match next_char {
                     Some(b'/') => switch_to!(EndTagOpen),
@@ -152,7 +153,7 @@ impl<'a, S: BufRead, E: Emitter> Tokenizer<'a, S, E> {
             EndTagOpen => {
                 match next_char {
                     Some(b'>') => {
-                        self.emitter.emit_short_end_tag();
+                        self.emitter.emit_tag();
                         switch_to!(Data);
                     }
                     None | Some(b'\t') | Some(b'\n')
@@ -189,7 +190,7 @@ impl<'a, S: BufRead, E: Emitter> Tokenizer<'a, S, E> {
             EndTagNameAfter => {
                 match next_char {
                     Some(b'>') => {
-                        self.emitter.emit_token();
+                        self.emitter.emit_tag();
                         switch_to!(Data);
                     }
                     Some(b' ') | Some(b'\n') | Some(b'\t') => {}
@@ -218,7 +219,7 @@ impl<'a, S: BufRead, E: Emitter> Tokenizer<'a, S, E> {
                     }
                     _ => {
                         self.emitter.emit_error(Xml5Error::EofInTag);
-                        self.emitter.emit_token();
+                        self.emitter.emit_tag();
                         reconsume!(Data);
                     }
                 }
@@ -236,17 +237,17 @@ impl<'a, S: BufRead, E: Emitter> Tokenizer<'a, S, E> {
                 match next_char {
                     Some(b't') | Some(b't') | Some(b't') => (),
                     Some(b'>') => {
-                        self.emitter.emit_token();
+                        self.emitter.emit_tag();
                         switch_to!(Data);
-                    },
+                    }
                     Some(b'/') => {
                         self.emitter.set_empty_tag();
                         switch_to!(EmptyTag);
-                    },
+                    }
                     Some(b':') => self.emitter.emit_error(Xml5Error::ColonBeforeAttrName),
                     None => {
                         self.emitter.emit_error(Xml5Error::EofInTag);
-                        self.emitter.emit_token();
+                        self.emitter.emit_tag();
                         reconsume!(Data);
                     }
                     Some(bit) => {
@@ -256,7 +257,7 @@ impl<'a, S: BufRead, E: Emitter> Tokenizer<'a, S, E> {
                 }
             }
             TagAttrName => {
-                match self.read_fast_until(&[b'\t', b'\n', b' ', b'=', b'>',  b'/']) {
+                match self.read_fast_until(&[b'\t', b'\n', b' ', b'=', b'>', b'/']) {
                     Char(b'\t') | Char(b'\n') | Char(b' ') => switch_to!(TagAttrValueBefore),
                     Char(b'=') => switch_to!(TagAttrValueBefore),
                     Char(b'>') => {
@@ -281,13 +282,13 @@ impl<'a, S: BufRead, E: Emitter> Tokenizer<'a, S, E> {
                     Some(b'>') => {
                         self.emitter.emit_tag();
                         switch_to!(EmptyTag);
-                    },
+                    }
                     Some(b'/') => {
-                        self.set_empty_tag();
+                        self.emitter.set_empty_tag();
                         switch_to!(EmptyTag);
-                    },
+                    }
                     None => {
-                        elf.emitter.emit_error(Xml5Error::EofInTag);
+                        self.emitter.emit_error(Xml5Error::EofInTag);
                         self.emitter.emit_tag();
                         reconsume!(Data);
                     }
@@ -297,8 +298,67 @@ impl<'a, S: BufRead, E: Emitter> Tokenizer<'a, S, E> {
                     }
                 }
             }
-            // TODO Attr
-
+            TagAttrValueBefore => {
+                match next_char {
+                    Some(b'\t') | Some(b'\n') | Some(b' ') => (),
+                    Some(b'"') => switch_to!(TagAttrValue(DoubleQuoted)),
+                    Some(b'\'') => switch_to!(TagAttrValue(SingleQuoted)),
+                    Some(b'&') => reconsume!(TagAttrValue(Unquoted)),
+                    Some(b'>') => {
+                        self.emitter.emit_tag();
+                        switch_to!(Data);
+                    }
+                    None => {
+                        self.emitter.emit_error(Xml5Error::EofInTag);
+                        self.emitter.emit_tag();
+                        reconsume!(Data);
+                    }
+                    Some(byt) => {
+                        self.emitter.push_attr_value(byt);
+                        switch_to!(TagAttrValue(Unquoted));
+                    }
+                }
+            }
+            TagAttrValue(DoubleQuoted) => {
+                match self.read_fast_until(&[b'&', b'"']) {
+                    Char(b'"') => switch_to!(TagAttrNameBefore),
+                    Char(_) => switch_to!(CharRefInData(DoubleQuoted)),
+                    InterNeedle(buf) => self.emitter.push_attr_values(buf),
+                    EOF => {
+                        self.emitter.emit_error(Xml5Error::EofInTag);
+                        self.emitter.emit_tag();
+                        reconsume!(Data);
+                    }
+                }
+            }
+            TagAttrValue(SingleQuoted) => {
+                match self.read_fast_until(&[b'&', b'\'']) {
+                    Char(b'\'') => switch_to!(TagAttrNameBefore),
+                    Char(_) => switch_to!(CharRefInData(DoubleQuoted)),
+                    InterNeedle(buf) => self.emitter.push_attr_values(buf),
+                    EOF => {
+                        self.emitter.emit_error(Xml5Error::EofInTag);
+                        self.emitter.emit_tag();
+                        reconsume!(Data);
+                    }
+                }
+            }
+            TagAttrValue(Unquoted) => {
+                match self.read_fast_until(&[b'\t', b'\n', b' ', b'&', b'>']) {
+                    Char(b'\t') | Char(b'\n') | Char(b' ') => switch_to!(TagAttrNameBefore),
+                    Char(b'&') => switch_to!(CharRefInData(Unquoted)),
+                    Char(_) => {
+                        self.emitter.emit_tag();
+                        switch_to!(Data);
+                    }
+                    InterNeedle(buf) => self.emitter.push_attr_values(buf),
+                    EOF => {
+                        self.emitter.emit_error(Xml5Error::EofInTag);
+                        self.emitter.emit_tag();
+                        reconsume!(Data);
+                    }
+                }
+            }
             Pi => {
                 match next_char {
                     None | Some(b' ') | Some(b'\n') | Some(b'\t') => {
@@ -343,7 +403,7 @@ impl<'a, S: BufRead, E: Emitter> Tokenizer<'a, S, E> {
             PiAfter => {
                 match next_char {
                     Some(b'>') => {
-                        self.emitter.emit_token();
+                        self.emitter.emit_pi();
                         switch_to!(Data);
                     }
                     Some(b'?') => self.emitter.append_pi_data_byte(b'?'),
@@ -447,7 +507,7 @@ impl<'a, S: BufRead, E: Emitter> Tokenizer<'a, S, E> {
                         self.emitter.emit_error(Xml5Error::EofInComment);
                         self.emitter.emit_comment();
                         self.emitter.emit_eof();
-                    },
+                    }
                     _ => {
                         self.emitter.append_to_comment_data(b'-');
                         reconsume!(Comment);
@@ -459,14 +519,14 @@ impl<'a, S: BufRead, E: Emitter> Tokenizer<'a, S, E> {
                     Some(b'>') => {
                         switch_to!(Data);
                         self.emitter.emit_comment();
-                    },
+                    }
                     Some(b'!') => switch_to!(CommentEndBang),
                     Some(b'-') => self.emitter.append_to_comment_data(b'-'),
                     None => {
                         self.emitter.emit_error(Xml5Error::EofInComment);
                         self.emitter.emit_comment();
                         self.emitter.emit_eof();
-                    },
+                    }
                     _ => {
                         self.emitter.append_to_comment("--");
                         reconsume!(Comment);
@@ -511,14 +571,14 @@ impl<'a, S: BufRead, E: Emitter> Tokenizer<'a, S, E> {
                     None => {
                         self.emitter.emit_error(Xml5Error::EofInCdata);
                         reconsume!(Data);
-                    },
+                    }
                     Some(chr) => {
                         self.emitter.emit_char(b']');
                         self.emitter.emit_char(chr);
                         switch_to!(CdataBracket);
                     }
                 }
-            },
+            }
             CdataEnd => {
                 match next_char {
                     Some(b'>') => switch_to!(Data),
@@ -526,16 +586,314 @@ impl<'a, S: BufRead, E: Emitter> Tokenizer<'a, S, E> {
                     None => {
                         self.emitter.emit_error(Xml5Error::EofInCdata);
                         reconsume!(Data);
-                    },
+                    }
                     Some(chr) => {
                         self.emitter.emit_chars("]]");
                         self.emitter.emit_char(chr);
                         switch_to!(Cdata);
                     }
                 }
+            }
+            BogusComment => {
+                match self.read_fast_until(&[b'>']) {
+                    Char(_) => {
+                        switch_to!(Data);
+                    }
+                    InterNeedle(buf) => self.emitter.append_to_comment(buf),
+                    _ => {
+                        self.emitter.emit_comment();
+                        self.emitter.emit_eof();
+                    }
+                }
+            }
+            Doctype => {
+                match next_char {
+                    Some(b'\t') | Some(b'\n') | Some(b' ') => switch_to!(BeforeDoctypeName),
+                    None => {
+                        self.emitter.emit_error(Xml5Error::EofInDoctype);
+                        self.emitter.emit_doctype();
+                        self.emitter.emit_eof();
+                    }
+                    _ => {
+                        self.emitter.emit_error(Xml5Error::MissingWhitespaceDoctype);
+                        reconsume!(BeforeDoctypeName);
+                    }
+                }
+            }
+            BeforeDoctypeName => {
+                match next_char {
+                    Some(b'\t') | Some(b'\n') | Some(b' ') => (),
+                    Some(b'>') => {
+                        self.emitter.emit_error(Xml5Error::MissingDoctypeName);
+                        self.emitter.emit_doctype();
+                        switch_to!(Data);
+                    }
+                    None => {
+                        self.emitter.emit_error(Xml5Error::EofInDoctype);
+                        self.emitter.emit_doctype();
+                        self.emitter.emit_eof();
+                    }
+                    Some(x) => {
+                        self.emitter.create_doctype();
+                        let chr = if x.is_ascii_uppercase() {
+                            x.to_ascii_lowercase()
+                        } else {
+                            x
+                        };
+                        self.emitter.append_doctype_name(chr);
+                        switch_to!(DoctypeName);
+                    }
+                }
+            }
+            DoctypeName => {
+                match next_char {
+                    Some(b'\t') | Some(b'\n') | Some(b' ') => switch_to!(AfterDoctypeName),
+                    Some(b'>') => {
+                        self.emitter.emit_doctype();
+                        switch_to!(Data);
+                    }
+                    None => {
+                        self.emitter.emit_error(Xml5Error::EofInDoctype);
+                        self.emitter.emit_doctype();
+                        self.emitter.emit_eof();
+                    }
+                    Some(x) => {
+                        let chr = if x.is_ascii_uppercase() {
+                            x.to_ascii_lowercase()
+                        } else {
+                            x
+                        };
+                        self.emitter.append_doctype_name(chr);
+                        switch_to!(DoctypeName);
+                    }
+                }
+            }
+            AfterDoctypeName => {
+                match next_char {
+                    Some(b'\t') | Some(b'\n') | Some(b' ') => (),
+                    Some(b'>') => {
+                        switch_to!(Data);
+                        self.emitter.emit_doctype();
+                    }
+                    None => {
+                        self.emitter.emit_error(Xml5Error::EofInDoctype);
+                        self.emitter.emit_doctype();
+                        self.emitter.emit_eof();
+                    }
+                    _ => {
+                        if self.try_read_slice("PUBLIC", false) {
+                            switch_to!(AfterDoctypeKeyword(Public))
+                        } else if self.try_read_slice("SYSTEM", false) {
+                            switch_to!(AfterDoctypeKeyword(System))
+                        } else {
+                            self.emitter.emit_error(Xml5Error::InvalidCharactersInAfterDoctypeName);
+                            switch_to!(BogusComment);
+                        }
+                    }
+                }
             },
-            // TODO DOCTYPE
-            _ => {}
+            AfterDoctypeKeyword(Public) => {
+                match next_char {
+                    Some(b'\t') | Some(b'\n') | Some(b' ') => switch_to!(BeforeDoctypeIdentifier(Public)),
+                    Some(b'"') => {
+                        self.emitter.emit_error(Xml5Error::MissingWhitespaceAfterDoctypeKeyword);
+                        self.emitter.clear_doctype_id(Public);
+                        switch_to!(DoctypeIdentifierDoubleQuoted(Public));
+                    },
+                    Some(b'\'') => {
+                        self.emitter.emit_error(Xml5Error::MissingWhitespaceAfterDoctypeKeyword);
+                        self.emitter.clear_doctype_id(Public);
+                        switch_to!(DoctypeIdentifierSingleQuoted(Public));
+                    }
+                    Some(b'>') => {
+                        self.emitter.emit_error(Xml5Error::MissingWhitespaceAfterDoctypeKeyword);
+                        self.emitter.clear_doctype_id(Public);
+                        switch_to!(Data);
+                    }
+                    None => {
+                        self.emitter.emit_error(Xml5Error::EofInDoctype);
+                        self.emitter.emit_doctype();
+                        self.emitter.emit_eof();
+                    }
+                    _ => {
+                        self.emitter.emit_error(Xml5Error::MissingQuoteBeforeIdentifier);
+                        reconsume!(BogusDoctype);
+                    }
+                }
+            }
+            AfterDoctypeKeyword(System) => {
+                match next_char {
+                    Some(b'\t') | Some(b'\n') | Some(b' ') => switch_to!(BeforeDoctypeIdentifier(System)),
+                    Some(b'"') => {
+                        self.emitter.emit_error(Xml5Error::MissingWhitespaceAfterDoctypeKeyword);
+                        self.emitter.clear_doctype_id(System);
+                        switch_to!(DoctypeIdentifierDoubleQuoted(System));
+                    },
+                    Some(b'\'') => {
+                        self.emitter.emit_error(Xml5Error::MissingWhitespaceAfterDoctypeKeyword);
+                        self.emitter.clear_doctype_id(System);
+                        switch_to!(DoctypeIdentifierSingleQuoted(System));
+                    }
+                    Some(b'>') => {
+                        self.emitter.emit_error(Xml5Error::MissingWhitespaceAfterDoctypeKeyword);
+                        self.emitter.clear_doctype_id(System);
+                        switch_to!(Data);
+                    }
+                    None => {
+                        self.emitter.emit_error(Xml5Error::EofInDoctype);
+                        self.emitter.emit_doctype();
+                        self.emitter.emit_eof();
+                    }
+                    _ => {
+                        self.emitter.emit_error(Xml5Error::MissingQuoteBeforeIdentifier);
+                        reconsume!(BogusDoctype);
+                    }
+                }
+            }
+            BeforeDoctypeIdentifier(kind) => {
+                match next_char {
+                    Some(b'\t') | Some(b'\n') | Some(b' ') => (),
+                    Some(b'"') => {
+                        self.emitter.clear_doctype_id(kind);
+                        switch_to!(DoctypeIdentifierDoubleQuoted(kind));
+                    },
+                    Some(b'\'') => {
+                        self.emitter.clear_doctype_id(kind);
+                        switch_to!(DoctypeIdentifierSingleQuoted(kind));
+                    }
+                    Some(b'>') => {
+                        self.emitter.emit_error(Xml5Error::MissingDoctypeIdentifier);
+                        switch_to!(Data);
+                        self.emitter.emit_doctype();
+                    }
+                    None => {
+                        self.emitter.emit_error(Xml5Error::EofInDoctype);
+                        self.emitter.emit_doctype();
+                        self.emitter.emit_eof();
+                    }
+                    _ => {
+                        self.emitter.emit_error(Xml5Error::MissingQuoteBeforeIdentifier);
+                        reconsume!(BogusDoctype);
+                    }
+                }
+            }
+            DoctypeIdentifierDoubleQuoted(kind) => {
+                match self.read_fast_until(&[b'"', b'>']) {
+                    Char(b'"') => switch_to!(AfterDoctypeIdentifier(kind)),
+                    Char(b'>') => {
+                        self.emitter.emit_error(Xml5Error::AbruptEndDoctypeIdentifier);
+                        switch_to!(Data);
+                        self.emitter.emit_doctype();
+                    }
+                    InterNeedle(buf) => {
+                        self.emitter.append_doctype_id(buf);
+                    }
+                    _ => {
+                        self.emitter.emit_error(Xml5Error::EofInDoctype);
+                        self.emitter.emit_doctype();
+                        self.emitter.emit_eof();
+                    }
+                }
+            }
+            DoctypeIdentifierSingleQuoted(kind) => {
+                match self.read_fast_until(&[b'\'', b'>']) {
+                    Char(b'\'') => switch_to!(AfterDoctypeIdentifier(kind)),
+                    Char(b'>') => {
+                        self.emitter.emit_error(Xml5Error::AbruptEndDoctypeIdentifier);
+                        switch_to!(Data);
+                        self.emitter.emit_doctype();
+                    }
+                    InterNeedle(buf) => {
+                        self.emitter.append_doctype_id(buf);
+                    }
+                    _ => {
+                        self.emitter.emit_error(Xml5Error::EofInDoctype);
+                        self.emitter.emit_doctype();
+                        self.emitter.emit_eof();
+                    }
+                }
+            }
+            AfterDoctypeIdentifier(Public) => {
+                match next_char {
+                    Some(b'\t') | Some(b'\n') | Some(b' ') => switch_to!(BetweenDoctypePublicAndSystemIdentifiers),
+                    Some(b'>') => {
+                        switch_to!(Data);
+                        self.emitter.emit_doctype();
+                    }
+                    Some(b'"') => {
+                        self.emitter.emit_error(Xml5Error::MissingWhitespaceBetweenDoctypePublicAndSystem);
+                        switch_to!(DoctypeIdentifierDoubleQuoted(System));
+                    }
+                    Some(b'\'') => {
+                        self.emitter.emit_error(Xml5Error::MissingWhitespaceBetweenDoctypePublicAndSystem);
+                        switch_to!(DoctypeIdentifierSingleQuoted(System));
+                    }
+                    None => {
+                        self.emitter.emit_error(Xml5Error::EofInDoctype);
+                        self.emitter.emit_doctype();
+                        self.emitter.emit_eof();
+                    }
+                    _ => {
+                        self.emitter.emit_error(Xml5Error::MissingQuoteBeforeIdentifier);
+                        reconsume!(BogusDoctype);
+                    }
+                }
+            }
+            BetweenDoctypePublicAndSystemIdentifiers => {
+                match next_char {
+                    Some(b'\t') | Some(b'\n') | Some(b' ') => (),
+                    Some(b'"') => {
+                        self.emitter.clear_doctype_id(System);
+                        switch_to!(DoctypeIdentifierDoubleQuoted(System))
+                    }
+                    Some(b'\'') => {
+                        self.emitter.clear_doctype_id(System);
+                        switch_to!(DoctypeIdentifierSingleQuoted(System))
+                    }
+                    Some(b'>') => {
+                        switch_to!(Data);
+                        self.emitter.emit_doctype();
+                    }
+                    None => {
+                        self.emitter.emit_error(Xml5Error::EofInDoctype);
+                        self.emitter.emit_doctype();
+                        self.emitter.emit_eof();
+                    }
+                    _ => {
+                        self.emitter.emit_error(Xml5Error::MissingQuoteBeforeIdentifier);
+                        reconsume!(BogusDoctype);
+                    }
+                }
+            }
+            AfterDoctypeIdentifier(System) => {
+                match next_char {
+                    Some(b'\t') | Some(b'\n') | Some(b' ') => (),
+                    Some(b'>') => {
+                        self.emitter.emit_doctype();
+                        switch_to!(Data);
+                    }
+                    _ => {
+                        self.emitter.emit_error(Xml5Error::MissingQuoteBeforeIdentifier);
+                        reconsume!(BogusDoctype);
+                    }
+                }
+            }
+            BogusDoctype => {
+                match next_char {
+                    Some(b'>') => {
+                        switch_to!(Data);
+                        self.emitter.emit_doctype();
+                    }
+                    None => {
+                        self.emitter.emit_doctype();
+                        self.emitter.emit_eof();
+                    }
+                    _ => (),
+                }
+            }
+            CharRefInData(_) => {
+                // TODO char ref
+            }
         };
         self.source.consume(amt);
         Control::Continue
