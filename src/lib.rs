@@ -5,9 +5,10 @@
 extern crate encoding_rs;
 extern crate core;
 
-mod tokenizer;
+mod encoding;
 mod errors;
 mod events;
+mod tokenizer;
 
-pub use tokenizer::{Tokenizer};
 pub use crate::events::Token;
+pub use tokenizer::Tokenizer;

@@ -1,7 +1,7 @@
 extern crate xml5;
 
-use xml5::{Token, Tokenizer};
 use xml5::Token::StartTag;
+use xml5::{Token, Tokenizer};
 
 #[test]
 fn test_xml() {

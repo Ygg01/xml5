@@ -1,7 +1,7 @@
+use crate::errors::{Xml5Error, Xml5Result};
+use crate::tokenizer::reader::FastRead::{Char, InterNeedle};
 use std::io;
 use std::io::{BufRead, Error, Read};
-use crate::errors::{Xml5Error, Xml5Result};
-use crate::tokenizer::reader::FastRead::{InterNeedle, Char};
 
 #[inline(always)]
 pub(crate) fn is_whitespace(b: u8) -> bool {
@@ -12,14 +12,13 @@ pub(crate) fn is_whitespace(b: u8) -> bool {
 }
 
 pub(crate) trait BufferedInput<'r, 'i, B>
-    where
-        Self: 'i,
+where
+    Self: 'i,
 {
     fn peek_byte(&mut self) -> Xml5Result<Option<u8>>;
 }
 
-impl<'b, 'i, R: BufRead + 'i> BufferedInput<'b, 'i, &'b mut Vec<u8>> for R
-{
+impl<'b, 'i, R: BufRead + 'i> BufferedInput<'b, 'i, &'b mut Vec<u8>> for R {
     fn peek_byte(&mut self) -> Xml5Result<Option<u8>> {
         loop {
             break match self.fill_buf() {
@@ -31,7 +30,6 @@ impl<'b, 'i, R: BufRead + 'i> BufferedInput<'b, 'i, &'b mut Vec<u8>> for R
         }
     }
 }
-
 
 #[inline]
 pub(crate) fn fast_find(needle: &[u8], haystack: &[u8]) -> Option<usize> {
@@ -52,15 +50,15 @@ pub(crate) fn fast_find(needle: &[u8], haystack: &[u8]) -> Option<usize> {
 #[derive(PartialEq, Debug)]
 pub(crate) enum FastRead {
     Char(u8),
-    InterNeedle(Vec<u8>),
+    InterNeedle(usize, usize),
     EOF,
 }
 
 impl FastRead {
     pub(crate) fn is_ok(&self) -> bool {
         match self {
-            Char(_) | InterNeedle(_) => true,
-            _ => false
+            Char(_) | InterNeedle(_, _) => true,
+            _ => false,
         }
     }
 }

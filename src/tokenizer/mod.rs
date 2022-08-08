@@ -1,19 +1,18 @@
-use std::io::{BufRead};
+use std::io::BufRead;
 
-#[cfg(feature = "encoding_rs")]
-use encoding_rs::Encoding;
 use crate::errors::{Xml5Error, Xml5Result};
 use crate::Token;
+#[cfg(feature = "encoding_rs")]
+use encoding_rs::Encoding;
 
 use crate::tokenizer::emitter::{DefaultEmitter, Emitter};
 
 mod decoding;
-mod reader;
-mod machine;
 mod emitter;
+mod machine;
+mod reader;
 
-
-pub struct Tokenizer<'b, S: BufRead, E: Emitter = DefaultEmitter> {
+pub struct Tokenizer<'b, S: BufRead, E: Emitter = DefaultEmitter<'b>> {
     pub(crate) source: S,
     pub(crate) buffer: &'b mut Vec<u8>,
     emitter: E,
@@ -43,10 +42,10 @@ impl<'a> Tokenizer<'a, &'a [u8]> {
     }
 }
 
-impl<'a, R: BufRead, E: Emitter<OutToken=Token>> Iterator for Tokenizer<'a, R, E> {
-    type Item = Token;
+impl<'a, R: BufRead, E: Emitter<OutToken = Token<'a>>> Iterator for Tokenizer<'a, R, E> {
+    type Item = Token<'a>;
 
-    fn next(&mut self) -> Option<Token> {
+    fn next(&mut self) -> Option<Token<'a>> {
         loop {
             if let Some(token) = self.emitter.pop_token() {
                 break Some(token);
@@ -57,7 +56,7 @@ impl<'a, R: BufRead, E: Emitter<OutToken=Token>> Iterator for Tokenizer<'a, R, E
                         self.eof = true;
                         self.emitter.emit_eof();
                     }
-                    Control::Err(e) => break Some(Token::Error(e))
+                    Control::Err(e) => break Some(Token::Error(e)),
                 }
             } else {
                 break None;
@@ -119,7 +118,6 @@ enum TokenState {
     AfterDoctypeIdentifier(DoctypeKind),
     BetweenDoctypePublicAndSystemIdentifiers,
     BogusDoctype,
-
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -135,4 +133,3 @@ pub enum DoctypeKind {
     Public,
     System,
 }
-

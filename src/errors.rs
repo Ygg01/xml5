@@ -28,6 +28,22 @@ pub enum Xml5Error {
     UnexpectedEof,
     Utf8(Utf8Error),
     Io(String),
+    NonDecodable(Utf8Error),
     NotFound,
 }
 
+impl From<::std::io::Error> for Xml5Error {
+    /// Creates a new `Error::Io` from the given error
+    #[inline]
+    fn from(error: ::std::io::Error) -> Xml5Error {
+        Xml5Error::Io(error.to_string())
+    }
+}
+
+impl From<Utf8Error> for Xml5Error {
+    /// Creates a new `Error::NonDecodable` from the given error
+    #[inline]
+    fn from(error: Utf8Error) -> Xml5Error {
+        Xml5Error::NonDecodable(error)
+    }
+}
