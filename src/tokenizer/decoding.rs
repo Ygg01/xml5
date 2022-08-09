@@ -5,7 +5,6 @@ use std::str::from_utf8;
 use encoding_rs::Encoding;
 
 use crate::errors::{Xml5Error, Xml5Result};
-use crate::tokenizer::emitter::Emitter;
 use crate::tokenizer::Tokenizer;
 
 #[cfg(feature = "encoding")]
@@ -16,7 +15,7 @@ pub struct Decoder {
 #[cfg(not(feature = "encoding"))]
 pub struct Decoder;
 
-impl<'a, R: BufRead, E: Emitter> Tokenizer<'a, R, E> {
+impl<'a, R: BufRead> Tokenizer<'a, R> {
     #[cfg(feature = "encoding")]
     pub fn decoder(&self) -> Decoder {
         Decoder {

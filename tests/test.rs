@@ -1,5 +1,6 @@
 extern crate xml5;
 
+use xml5::encoding::Decoder;
 use xml5::Token::StartTag;
 use xml5::{Token, Tokenizer};
 
@@ -11,7 +12,9 @@ fn test_xml() {
 
     for token in reader {
         match token {
-            StartTag(start_tag) => {}
+            StartTag(start_tag) => {
+                assert_eq!("xml", start_tag.name_as_str(Decoder::utf8()))
+            }
             _ => {}
         }
     }

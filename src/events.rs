@@ -1,11 +1,12 @@
 use crate::encoding::Decoder;
 use crate::errors::Xml5Error;
 use std::borrow::Cow;
+use std::str::{from_utf8, from_utf8_unchecked, Utf8Error};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Token<'a> {
     ///
-    Bom(BomText<'a>),
+    Bom(EncodedText<'a>),
     /// Character data between `Start` and `End` element.
     Text(BytesText<'a>),
     /// Start tag (with attributes) `<tag attr="value">` or `<tag attr="value" />`.
@@ -13,7 +14,7 @@ pub enum Token<'a> {
     /// End tag `</tag>`, or empty tag `</>`
     EndTag(BytesText<'a>),
     /// Empty tag `<tag attr='x'/>`
-    EmtpyTag(TagAndAttrText<'a>),
+    EmptyTag(TagAndAttrText<'a>),
     /// Comment `<!-- ... -->`.
     Comment(BytesText<'a>),
     /// CData `<![CDATA[...]]>`.
@@ -31,7 +32,7 @@ pub enum Token<'a> {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct BomText<'a> {
+pub struct EncodedText<'a> {
     pub(crate) buf: Cow<'a, [u8]>,
     /// Encoding in which the `content` is stored inside the event
     pub(crate) decoder: Decoder,
@@ -39,9 +40,31 @@ pub struct BomText<'a> {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TagAndAttrText<'a> {
-    pub(crate) name: Cow<'a, [u8]>,
+    pub name: Cow<'a, [u8]>,
     pub(crate) self_closing: bool,
     pub(crate) name_len: usize,
+}
+
+impl<'a> TagAndAttrText<'a> {
+    #[cfg(feature = "encoding")]
+    pub fn name_as_str(&self, decoding: Decoder) -> crate::encoding::Result<Cow<'_, str>> {
+        unsafe {
+            match &self.name {
+                Cow::Borrowed(x) => decoding.decode(x),
+                Cow::Owned(x) => decoding.decode(x),
+            }
+        }
+    }
+
+    #[cfg(not(feature = "encoding"))]
+    pub fn name_as_str(&self, decoding: Decoder) -> &str {
+        unsafe {
+            match &self.name {
+                Cow::Borrowed(x) => from_utf8_unchecked(x),
+                Cow::Owned(x) => from_utf8_unchecked(x),
+            }
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Default)]

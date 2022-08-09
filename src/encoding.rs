@@ -55,7 +55,7 @@ pub struct Decoder {
 }
 
 impl Decoder {
-    pub(crate) fn utf8() -> Self {
+    pub fn utf8() -> Self {
         Decoder {
             #[cfg(feature = "encoding")]
             encoding: UTF_8,

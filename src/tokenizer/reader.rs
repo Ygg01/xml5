@@ -1,15 +1,6 @@
 use crate::errors::{Xml5Error, Xml5Result};
-use crate::tokenizer::reader::FastRead::{Char, InterNeedle};
 use std::io;
-use std::io::{BufRead, Error, Read};
-
-#[inline(always)]
-pub(crate) fn is_whitespace(b: u8) -> bool {
-    match b {
-        b' ' | b'\r' | b'\n' | b'\t' => true,
-        _ => false,
-    }
-}
+use std::io::BufRead;
 
 pub(crate) trait BufferedInput<'r, 'i, B>
 where
@@ -52,13 +43,4 @@ pub(crate) enum FastRead {
     Char(u8),
     InterNeedle(usize, usize),
     EOF,
-}
-
-impl FastRead {
-    pub(crate) fn is_ok(&self) -> bool {
-        match self {
-            Char(_) | InterNeedle(_, _) => true,
-            _ => false,
-        }
-    }
 }
