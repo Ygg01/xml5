@@ -1,10 +1,15 @@
+use std::borrow::Cow;
 use std::io::BufRead;
 use std::str::from_utf8;
 
-#[cfg(feature = "encoding_rs")]
+#[cfg(feature = "encoding")]
 use encoding_rs::Encoding;
 
+#[cfg(feature = "encoding")]
+use crate::tokenizer::encoding::EncodingRef;
+
 use crate::errors::{Xml5Error, Xml5Result};
+
 use crate::tokenizer::Tokenizer;
 
 #[cfg(feature = "encoding")]
@@ -19,7 +24,7 @@ impl Tokenizer {
     #[cfg(feature = "encoding")]
     pub fn decoder(&self) -> Decoder {
         Decoder {
-            encoding: self.encoding,
+            encoding: self.encoder_ref.encoding(),
         }
     }
 
@@ -38,21 +43,21 @@ impl Tokenizer {
     #[cfg(feature = "encoding")]
     pub fn decode_without_bom<'b, 'c>(&'b mut self, mut bytes: &'c [u8]) -> Cow<'c, str> {
         if self.is_encoding_set {
-            return self.encoding.decode_with_bom_removal(bytes).0;
+            return self.encoder_ref.decode_with_bom_removal(bytes).0;
         }
         if bytes.starts_with(b"\xEF\xBB\xBF") {
             self.is_encoding_set = true;
             bytes = &bytes[3..];
         } else if bytes.starts_with(b"\xFF\xFE") {
             self.is_encoding_set = true;
-            self.encoding = encoding_rs::UTF_16LE;
+            self.encoder_ref = encoding_rs::UTF_16LE;
             bytes = &bytes[2..];
         } else if bytes.starts_with(b"\xFE\xFF") {
             self.is_encoding_set = true;
-            self.encoding = encoding_rs::UTF_16BE;
+            self.encoder_ref = encoding_rs::UTF_16BE;
             bytes = &bytes[3..];
         };
-        self.encoding.decode_without_bom_handling(bytes).0
+        self.encoder_ref.decode_without_bom_handling(bytes).0
     }
 
     /// Decodes a UTF8 slice without BOM (Byte order mark) regardless of XML declaration.

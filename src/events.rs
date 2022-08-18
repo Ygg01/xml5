@@ -1,7 +1,8 @@
 use crate::encoding::Decoder;
 use crate::errors::Xml5Error;
+use crate::Token::{EndTag, StartTag};
 use std::borrow::Cow;
-use std::str::{from_utf8, from_utf8_unchecked, Utf8Error};
+use std::str::from_utf8_unchecked;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Token<'a> {
@@ -29,6 +30,34 @@ pub enum Token<'a> {
     Eof,
     /// Error
     Error(Xml5Error),
+}
+
+impl<'a> Token<'a> {
+    pub fn start_tag(cow: Cow<'a, [u8]>) -> Token<'_> {
+        StartTag(TagAndAttrText {
+            name: cow,
+            self_closing: false,
+            name_len: 4,
+        })
+    }
+
+    pub fn end_tag(cow: Cow<'a, [u8]>) -> Token<'_> {
+        EndTag(BytesText { name: cow })
+    }
+}
+
+impl PartialEq<Token<'_>> for &str {
+    fn eq(&self, other: &Token<'_>) -> bool {
+        match other {
+            Token::Bom(ec) => self.as_bytes() == ec.buf.as_ref(),
+            Token::Text(bt)
+            | Token::EndTag(bt)
+            | Token::CData(bt)
+            | Token::Decl(bt)
+            | Token::Comment(bt) => self.as_bytes() == bt.name.as_ref(),
+            _ => false,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -73,6 +102,7 @@ pub struct BytesText<'a> {
 }
 
 impl<'a> BytesText<'a> {
+    #[inline]
     pub fn is_empty(&self) -> bool {
         self.name.is_empty()
     }

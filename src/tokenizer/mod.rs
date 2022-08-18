@@ -1,56 +1,51 @@
-use std::collections::VecDeque;
-use std::io;
-use std::io::BufRead;
-
-#[cfg(feature = "encoding_rs")]
-use encoding_rs::Encoding;
+use std::borrow::Cow;
 
 use crate::errors::Xml5Error;
-use crate::tokenizer::emitter::{Appendable, CurrentToken, Emitter};
-use crate::tokenizer::reader::FastRead::{Char, InterNeedle, EOF};
-use crate::tokenizer::reader::{fast_find, BuffReader, FastRead};
+use crate::tokenizer::emitter::SpanTokens::EndTag;
+use crate::tokenizer::emitter::{Emitter, SpanTokens, Spans};
+#[cfg(feature = "encoding")]
+use crate::tokenizer::encoding::EncodingRef;
+use crate::tokenizer::reader::{BuffReader, Reader, SliceReader};
 use crate::Token;
 
 mod decoding;
 mod emitter;
+#[cfg(feature = "encoding")]
+mod encoding;
 mod machine;
 mod reader;
 
+#[derive(Default)]
 pub struct Tokenizer {
     /// which state is the tokenizer in
     state: TokenState,
-    /// Which is current token
-    token_type: CurrentToken,
-    current_token: (usize, usize),
     /// End of file reached - parsing stops
     eof: bool,
-    allowed_char: Option<u8>,
     reader_pos: usize,
     /// encoding specified in the xml, or utf8 if none found
     #[cfg(feature = "encoding")]
-    encoding: &'static Encoding,
+    encoder_ref: EncodingRef,
     /// checks if xml5 could identify encoding
     #[cfg(feature = "encoding")]
     is_encoding_set: bool,
 }
 
-pub(crate) struct BufIterator<'a, R, E> {
-    pub state: Tokenizer,
-    pub reader: BuffReader<'a, R>,
-    pub emitter: E,
+pub struct SliceIterator<'a, E> {
+    state: Tokenizer,
+    reader: SliceReader<'a>,
+    emitter: E,
 }
 
-impl<'a, R, E> Iterator for BufIterator<'a, R, E>
+impl<'a, E> Iterator for SliceIterator<'a, E>
 where
-    R: BufRead,
-    E: Emitter<OutToken = Token<'a>>,
+    E: Emitter<Output = SpanTokens>,
 {
     type Item = Token<'a>;
 
-    fn next(&mut self) -> Option<Token<'a>> {
-        loop {
+    fn next(&mut self) -> Option<Self::Item> {
+        let x = loop {
             if let Some(token) = self.emitter.pop_token() {
-                break Some(token);
+                break token;
             } else if !self.state.eof {
                 match self.state.next_state(&mut self.reader, &mut self.emitter) {
                     Control::Continue => (),
@@ -58,14 +53,62 @@ where
                         self.state.eof = true;
                         self.emitter.emit_eof();
                     }
-                    Control::Err(e) => break Some(Token::Error(e)),
+                    _ => return None,
                 }
             } else {
-                break None;
+                return None;
             }
+        };
+        match x {
+            EndTag(Some(sp)) => Some(Token::end_tag(self.to_cow(sp))),
+
+            _ => None,
         }
     }
 }
+
+impl<'a, E> SliceIterator<'a, E> {
+    #[inline(always)]
+    fn to_cow(&self, span: Spans) -> Cow<'a, [u8]> {
+        match span {
+            Spans::Span(range) => Cow::Borrowed(&self.reader.slice[range]),
+            Spans::Characters(vc) => Cow::Owned(vc),
+        }
+    }
+}
+
+pub struct BufIterator<'a, R, E> {
+    state: Tokenizer,
+    reader: BuffReader<'a, R>,
+    emitter: E,
+}
+
+// impl<'a, R, E> Iterator for BufIterator<'a, R, E>
+// where
+//     R: BufRead,
+//     E: Emitter<OutToken = Token<'a>>,
+// {
+//     type Item = Token<'a>;
+//
+//     fn next(&mut self) -> Option<Token<'a>> {
+//         loop {
+//             if let Some(token) = self.emitter.pop_token() {
+//                 break Some(token);
+//             } else if !self.state.eof {
+//                 match self.state.next_state(&mut self.reader, &mut self.emitter) {
+//                     Control::Continue => (),
+//                     Control::Eof => {
+//                         self.state.eof = true;
+//                         self.emitter.emit_eof();
+//                     }
+//                     Control::Err(e) => break Some(Token::Error(e)),
+//                 }
+//             } else {
+//                 break None;
+//             }
+//         }
+//     }
+// }
 
 pub(crate) enum Control {
     Continue,
@@ -120,6 +163,12 @@ enum TokenState {
     AfterDoctypeIdentifier(DoctypeKind),
     BetweenDoctypePublicAndSystemIdentifiers,
     BogusDoctype,
+}
+
+impl Default for TokenState {
+    fn default() -> Self {
+        TokenState::Data
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
