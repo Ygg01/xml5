@@ -28,7 +28,9 @@ pub enum Xml5Error {
     UnexpectedEof,
     Utf8(Utf8Error),
     Io(String),
-    NonDecodable(Utf8Error),
+    /// Input decoding error. If `encoding` feature is disabled, contains `None`,
+    /// otherwise contains the UTF-8 decoding error
+    NonDecodable(Option<Utf8Error>),
     NotFound,
 }
 
@@ -44,6 +46,6 @@ impl From<Utf8Error> for Xml5Error {
     /// Creates a new `Error::NonDecodable` from the given error
     #[inline]
     fn from(error: Utf8Error) -> Xml5Error {
-        Xml5Error::NonDecodable(error)
+        Xml5Error::NonDecodable(Some(error))
     }
 }
