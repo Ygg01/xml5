@@ -4,22 +4,20 @@ use std::io::{BufRead, Read};
 
 use crate::errors::Xml5Error::UnexpectedEof;
 use crate::errors::{Xml5Error, Xml5Result};
-use crate::tokenizer::emitter::{SpanTokens, Spans};
-use crate::Token;
+use crate::tokenizer::emitter::Spans;
 
 pub(crate) trait Reader<'r> {
     fn peek_byte(&mut self) -> Xml5Result<Option<u8>>;
     fn consume_bytes(&mut self, amount: usize);
     fn slice_bytes(&self, start: usize, end: usize) -> &[u8];
     fn append_curr_char(&mut self) -> usize;
-    fn to_token(&'r self, span: SpanTokens) -> Token<'r>;
 
     fn try_read_slice(&mut self, needle: &str, case_sensitive: bool) -> bool;
     #[inline(always)]
     fn try_read_slice_exact(&mut self, needle: &str) -> bool {
         self.try_read_slice(needle, true)
     }
-    fn read_fast_until(&mut self, needle: &[u8], consume: &mut usize) -> FastRead;
+    fn read_fast_until(&mut self, needle: &[u8]) -> FastRead;
 }
 
 pub struct BuffReader<'a, S> {
@@ -31,10 +29,6 @@ impl<'a, R: BufRead> BuffReader<'a, R> {
     pub(crate) fn from_str<'s>(source: R, buffer: &'a mut Vec<u8>) -> BuffReader<'a, R> {
         Self { source, buffer }
     }
-
-    // pub fn slice(&self) -> &'a [u8] {
-    //     self.buffer[0..1].as_ref()
-    // }
 }
 
 impl<'b, B> Reader<'b> for BuffReader<'b, B>
@@ -50,6 +44,22 @@ where
                 Err(e) => break Err(Xml5Error::Io(e.to_string())),
             };
         }
+    }
+
+    fn consume_bytes(&mut self, amount: usize) {
+        self.source.consume(amount);
+    }
+
+    fn slice_bytes(&self, start: usize, end: usize) -> &[u8] {
+        &self.buffer[start..end]
+    }
+
+    fn append_curr_char(&mut self) -> usize {
+        if let Ok(Some(x)) = self.peek_byte() {
+            self.buffer.push(x);
+            return self.buffer.len() - 1;
+        }
+        panic!("This method shouldn't be called if there isn't a reader.peek_byte")
     }
 
     fn try_read_slice(&mut self, needle: &str, case_sensitive: bool) -> bool {
@@ -81,23 +91,7 @@ where
         read
     }
 
-    fn consume_bytes(&mut self, amount: usize) {
-        self.source.consume(amount);
-    }
-
-    fn append_curr_char(&mut self) -> usize {
-        if let Ok(Some(x)) = self.peek_byte() {
-            self.buffer.push(x);
-            return self.buffer.len() - 1;
-        }
-        panic!("This method shouldn't be called if there isn't a reader.peek_byte")
-    }
-
-    fn to_token(&self, span: SpanTokens) -> Token<'b> {
-        todo!()
-    }
-
-    fn read_fast_until(&mut self, needle: &[u8], consume: &mut usize) -> FastRead {
+    fn read_fast_until(&mut self, needle: &[u8]) -> FastRead {
         loop {
             // fill buffer
             let available = match self.source.fill_buf() {
@@ -116,13 +110,9 @@ where
                 }
                 None => (FastRead::EOF, 0),
             };
-            *consume = n;
+            self.consume_bytes(n);
             return read;
         }
-    }
-
-    fn slice_bytes(&self, start: usize, end: usize) -> &[u8] {
-        &self.buffer[start..end]
     }
 }
 
@@ -160,12 +150,6 @@ impl<'r> Reader<'r> for SliceReader<'r> {
         self.pos
     }
 
-    fn to_token(&self, span: SpanTokens) -> Token<'r> {
-        match span {
-            _ => Token::Eof,
-        }
-    }
-
     fn try_read_slice(&mut self, needle: &str, case_sensitive: bool) -> bool {
         if self.slice.len() < needle.len() {
             return false;
@@ -185,14 +169,13 @@ impl<'r> Reader<'r> for SliceReader<'r> {
         read
     }
 
-    fn read_fast_until(&mut self, needle: &[u8], consume: &mut usize) -> FastRead {
+    fn read_fast_until(&mut self, needle: &[u8]) -> FastRead {
         let (read, n) = match fast_find(needle, &self.slice[self.pos..]) {
             Some(0) => (FastRead::Char(self.slice[self.pos]), 1),
             Some(size) => (FastRead::InterNeedle(self.pos, self.pos + size), size),
             None => (FastRead::EOF, 0),
         };
         self.pos += n;
-        *consume = 0;
         read
     }
 }
@@ -222,7 +205,7 @@ pub(crate) enum FastRead {
 
 trait TestReader<'a>: Reader<'a> {
     fn test_read_fast(&mut self, needle: &str) -> String {
-        match self.read_fast_until(needle.as_bytes(), &mut 0usize) {
+        match self.read_fast_until(needle.as_bytes()) {
             FastRead::Char(chr) => format!("{}", chr as char),
             FastRead::InterNeedle(s, e) => {
                 String::from_utf8(self.slice_bytes(s, e).to_vec()).unwrap()

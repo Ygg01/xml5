@@ -1,17 +1,15 @@
-use crate::errors::Xml5Error;
 use std::collections::VecDeque;
 use std::ops::Range;
 
+use crate::errors::Xml5Error;
 use crate::tokenizer::emitter::Spans::{Characters, Span};
-
 use crate::tokenizer::DoctypeKind;
-use crate::Token;
+use crate::{Token, Tokenizer};
 
 pub trait Emitter {
     type Output;
 
     fn pop_token(&mut self) -> Option<Self::Output>;
-    fn flush_text(&mut self);
     fn emit_current_token(&mut self);
 
     fn create_tag(&mut self);
@@ -47,19 +45,19 @@ pub trait Emitter {
 }
 
 pub trait IntoBytes {
-    fn to_bytes(&self) -> Vec<u8>;
+    // fn to_bytes(&self) -> [u8];
 }
 
 impl IntoBytes for u8 {
-    fn to_bytes(&self) -> Vec<u8> {
-        vec![*self]
-    }
+    // fn to_bytes(&self) -> &[u8] {
+    //     *self.to_be_bytes()
+    // }
 }
 
 impl IntoBytes for &str {
-    fn to_bytes(&self) -> Vec<u8> {
-        self.as_bytes().to_vec()
-    }
+    // fn to_bytes(&self) -> &[u8] {
+    //     self.as_bytes()
+    // }
 }
 
 #[derive(Default)]
@@ -67,6 +65,7 @@ pub struct DefaultEmitter {
     tokens: VecDeque<SpanTokens>,
     current_token_type: CurrentToken,
     current_token_bounds: Range<usize>,
+    current_token_secondary_bound: Range<usize>,
     current_text: Vec<u8>,
 }
 
@@ -85,6 +84,7 @@ pub enum SpanTokens {
         name: Spans,
         attr: Vec<(Spans, Spans)>,
     },
+    Error(Xml5Error),
     Eof,
 }
 
@@ -98,17 +98,18 @@ impl DefaultEmitter {
     fn close_span(&mut self) {
         self.current_token_bounds.start = self.current_token_bounds.end;
     }
+
+    #[inline(always)]
+    fn close_span_secondary(&mut self) {
+        self.current_token_secondary_bound.start = self.current_token_secondary_bound.end;
+    }
 }
 
 impl Emitter for DefaultEmitter {
     type Output = SpanTokens;
 
-    fn pop_token(&mut self) -> Option<Self::Output> {
+    fn pop_token(&mut self) -> Option<SpanTokens> {
         self.tokens.pop_front()
-    }
-
-    fn flush_text(&mut self) {
-        todo!()
     }
 
     fn emit_current_token(&mut self) {
@@ -163,15 +164,29 @@ impl Emitter for DefaultEmitter {
     }
 
     fn create_pi_tag(&mut self) {
-        todo!()
+        self.current_token_type = CurrentToken::ProcessingInstruction;
+        self.close_span();
+        self.close_span_secondary();
     }
 
     fn pi_data(&mut self, start: usize, end: usize) {
-        todo!()
+        if self.current_token_bounds.start == start {
+            self.current_token_bounds.end = end;
+        } else {
+            self.emit_current_token();
+            self.current_token_bounds.start = start;
+            self.current_token_bounds.end = end;
+        }
     }
 
     fn pi_target(&mut self, start: usize, end: usize) {
-        todo!()
+        if self.current_token_secondary_bound.start == start {
+            self.current_token_secondary_bound.end = end;
+        } else {
+            self.emit_current_token();
+            self.current_token_secondary_bound.start = start;
+            self.current_token_secondary_bound.end = end;
+        }
     }
 
     fn create_doctype(&mut self) {
@@ -215,11 +230,14 @@ impl Emitter for DefaultEmitter {
     }
 
     fn emit_pi(&mut self) {
-        todo!()
+        self.tokens.push_back(SpanTokens::PiData {
+            name: Span(self.current_token_bounds.clone()),
+            value: Span(self.current_token_secondary_bound.clone()),
+        });
     }
 
     fn emit_error(&mut self, err: Xml5Error) {
-        todo!()
+        self.tokens.push_back(SpanTokens::Error(err));
     }
 
     fn emit_chars(&mut self, start: usize, end: usize) {
@@ -252,4 +270,14 @@ impl Default for CurrentToken {
     fn default() -> Self {
         CurrentToken::NoToken
     }
+}
+
+#[repr(u32)]
+pub enum Test {
+    Characters(String),
+    Test(u8),
+}
+
+fn main() {
+    println!("{}", std::mem::size_of::<Test>());
 }

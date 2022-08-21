@@ -63,12 +63,15 @@ impl Tokenizer {
         }
 
         match self.state {
-            Data => match reader.read_fast_until(&[b'<', b'&'], &mut amt) {
-                Char(b'&') => switch_to!(CharRefInData(Unquoted)),
-                Char(b'<') => switch_to!(TagOpen),
-                InterNeedle(start, end) => emitter.emit_chars(start, end),
-                _ => emitter.emit_eof(),
-            },
+            Data => {
+                amt = 0;
+                match reader.read_fast_until(&[b'<', b'&']) {
+                    Char(b'&') => switch_to!(CharRefInData(Unquoted)),
+                    Char(b'<') => switch_to!(TagOpen),
+                    InterNeedle(start, end) => emitter.emit_chars(start, end),
+                    _ => emitter.emit_eof(),
+                }
+            }
             TagOpen => match next_char {
                 Some(b'/') => switch_to!(EndTagOpen),
                 Some(b'?') => switch_to!(Pi),
@@ -99,24 +102,26 @@ impl Tokenizer {
                     reconsume!(EndTagName);
                 }
             },
-            EndTagName => match reader.read_fast_until(&[b'\t', b'\n', b' ', b'/', b'>'], &mut amt)
-            {
-                Char(b'\t') | Char(b'\n') | Char(b' ') => {
-                    switch_to!(EndTagNameAfter);
+            EndTagName => {
+                amt = 0;
+                match reader.read_fast_until(&[b'\t', b'\n', b' ', b'/', b'>']) {
+                    Char(b'\t') | Char(b'\n') | Char(b' ') => {
+                        switch_to!(EndTagNameAfter);
+                    }
+                    Char(b'/') => {
+                        emitter.emit_error(Xml5Error::UnexpectedSymbol('/'));
+                        switch_to!(EndTagNameAfter);
+                    }
+                    Char(b'>') => {
+                        emitter.emit_current_token();
+                        switch_to!(Data);
+                    }
+                    InterNeedle(start, end) => emitter.append_tag(start, end),
+                    _ => {
+                        emitter.emit_error(Xml5Error::UnexpectedEof);
+                    }
                 }
-                Char(b'/') => {
-                    emitter.emit_error(Xml5Error::UnexpectedSymbol('/'));
-                    switch_to!(EndTagNameAfter);
-                }
-                Char(b'>') => {
-                    emitter.emit_current_token();
-                    switch_to!(Data);
-                }
-                InterNeedle(start, end) => emitter.append_tag(start, end),
-                _ => {
-                    emitter.emit_error(Xml5Error::UnexpectedEof);
-                }
-            },
+            }
             EndTagNameAfter => match next_char {
                 Some(b'>') => {
                     emitter.emit_tag();
@@ -131,25 +136,28 @@ impl Tokenizer {
                     emitter.emit_error(Xml5Error::UnexpectedSymbol(x as char));
                 }
             },
-            TagName => match reader.read_fast_until(&[b'\t', b'\n', b' ', b'>', b'/'], &mut amt) {
-                Char(b'\t') | Char(b'\n') | Char(b' ') => switch_to!(TagAttrNameBefore),
-                Char(b'>') => {
-                    emitter.emit_tag();
-                    switch_to!(Data);
+            TagName => {
+                amt = 0;
+                match reader.read_fast_until(&[b'\t', b'\n', b' ', b'>', b'/']) {
+                    Char(b'\t') | Char(b'\n') | Char(b' ') => switch_to!(TagAttrNameBefore),
+                    Char(b'>') => {
+                        emitter.emit_tag();
+                        switch_to!(Data);
+                    }
+                    Char(b'/') => {
+                        emitter.set_empty_tag();
+                        switch_to!(EmptyTag);
+                    }
+                    InterNeedle(start, end) => {
+                        emitter.append_tag(start, end);
+                    }
+                    _ => {
+                        emitter.emit_error(Xml5Error::EofInTag);
+                        emitter.emit_tag();
+                        reconsume!(Data);
+                    }
                 }
-                Char(b'/') => {
-                    emitter.set_empty_tag();
-                    switch_to!(EmptyTag);
-                }
-                InterNeedle(start, end) => {
-                    emitter.append_tag(start, end);
-                }
-                _ => {
-                    emitter.emit_error(Xml5Error::EofInTag);
-                    emitter.emit_tag();
-                    reconsume!(Data);
-                }
-            },
+            }
             EmptyTag => match next_char {
                 Some(b'>') => {
                     emitter.emit_tag();
@@ -180,7 +188,8 @@ impl Tokenizer {
                 }
             },
             TagAttrName => {
-                match reader.read_fast_until(&[b'\t', b'\n', b' ', b'=', b'>', b'/'], &mut amt) {
+                amt = 0;
+                match reader.read_fast_until(&[b'\t', b'\n', b' ', b'=', b'>', b'/']) {
                     Char(b'\t') | Char(b'\n') | Char(b' ') => switch_to!(TagAttrValueBefore),
                     Char(b'=') => switch_to!(TagAttrValueBefore),
                     Char(b'>') => {
@@ -239,28 +248,35 @@ impl Tokenizer {
                     switch_to!(TagAttrValue(Unquoted));
                 }
             },
-            TagAttrValue(DoubleQuoted) => match reader.read_fast_until(&[b'&', b'"'], &mut amt) {
-                Char(b'"') => switch_to!(TagAttrNameBefore),
-                Char(_) => switch_to!(CharRefInData(DoubleQuoted)),
-                InterNeedle(start, end) => emitter.attr_values(start, end),
-                EOF => {
-                    emitter.emit_error(Xml5Error::EofInTag);
-                    emitter.emit_tag();
-                    reconsume!(Data);
+            TagAttrValue(DoubleQuoted) => {
+                amt = 0;
+                match reader.read_fast_until(&[b'&', b'"']) {
+                    Char(b'"') => switch_to!(TagAttrNameBefore),
+                    Char(_) => switch_to!(CharRefInData(DoubleQuoted)),
+                    InterNeedle(start, end) => emitter.attr_values(start, end),
+                    EOF => {
+                        emitter.emit_error(Xml5Error::EofInTag);
+                        emitter.emit_tag();
+                        reconsume!(Data);
+                    }
                 }
-            },
-            TagAttrValue(SingleQuoted) => match reader.read_fast_until(&[b'&', b'\''], &mut amt) {
-                Char(b'\'') => switch_to!(TagAttrNameBefore),
-                Char(_) => switch_to!(CharRefInData(DoubleQuoted)),
-                InterNeedle(start, end) => emitter.attr_values(start, end),
-                EOF => {
-                    emitter.emit_error(Xml5Error::EofInTag);
-                    emitter.emit_tag();
-                    reconsume!(Data);
+            }
+            TagAttrValue(SingleQuoted) => {
+                amt = 0;
+                match reader.read_fast_until(&[b'&', b'\'']) {
+                    Char(b'\'') => switch_to!(TagAttrNameBefore),
+                    Char(_) => switch_to!(CharRefInData(DoubleQuoted)),
+                    InterNeedle(start, end) => emitter.attr_values(start, end),
+                    EOF => {
+                        emitter.emit_error(Xml5Error::EofInTag);
+                        emitter.emit_tag();
+                        reconsume!(Data);
+                    }
                 }
-            },
+            }
             TagAttrValue(Unquoted) => {
-                match reader.read_fast_until(&[b'\t', b'\n', b' ', b'&', b'>'], &mut amt) {
+                amt = 0;
+                match reader.read_fast_until(&[b'\t', b'\n', b' ', b'&', b'>']) {
                     Char(b'\t') | Char(b'\n') | Char(b' ') => switch_to!(TagAttrNameBefore),
                     Char(b'&') => switch_to!(CharRefInData(Unquoted)),
                     Char(_) => {
@@ -286,29 +302,35 @@ impl Tokenizer {
                     switch_to!(PiTarget);
                 }
             },
-            PiTarget => match reader.read_fast_until(&[b'\t', b'\n', b' '], &mut amt) {
-                Char(b'\t') | Char(b'\n') | Char(b' ') => switch_to!(PiTargetAfter),
-                Char(b'?') => switch_to!(PiAfter),
-                InterNeedle(start, end) => emitter.pi_target(start, end),
-                _ => {
-                    emitter.emit_pi();
-                    emitter.emit_error(Xml5Error::UnexpectedEof);
-                    reconsume!(Data);
+            PiTarget => {
+                amt = 0;
+                match reader.read_fast_until(&[b'\t', b'\n', b' ']) {
+                    Char(b'\t') | Char(b'\n') | Char(b' ') => switch_to!(PiTargetAfter),
+                    Char(b'?') => switch_to!(PiAfter),
+                    InterNeedle(start, end) => emitter.pi_target(start, end),
+                    _ => {
+                        emitter.emit_pi();
+                        emitter.emit_error(Xml5Error::UnexpectedEof);
+                        reconsume!(Data);
+                    }
                 }
-            },
+            }
             PiTargetAfter => match next_char {
                 Some(b'\t') | Some(b'\n') | Some(b' ') => {}
                 _ => reconsume!(PiData),
             },
-            PiData => match reader.read_fast_until(&[b'?'], &mut amt) {
-                Char(b'?') => switch_to!(PiAfter),
-                InterNeedle(start, end) => emitter.pi_data(start, end),
-                _ => {
-                    emitter.emit_error(Xml5Error::UnexpectedEof);
-                    emitter.emit_pi();
-                    reconsume!(Data);
+            PiData => {
+                amt = 0;
+                match reader.read_fast_until(&[b'?']) {
+                    Char(b'?') => switch_to!(PiAfter),
+                    InterNeedle(start, end) => emitter.pi_data(start, end),
+                    _ => {
+                        emitter.emit_error(Xml5Error::UnexpectedEof);
+                        emitter.emit_pi();
+                        reconsume!(Data);
+                    }
                 }
-            },
+            }
             PiAfter => match next_char {
                 Some(b'>') => {
                     emitter.emit_pi();
@@ -356,21 +378,24 @@ impl Tokenizer {
                     reconsume!(Comment);
                 }
             },
-            Comment => match reader.read_fast_until(&[b'<', b'-'], &mut amt) {
-                InterNeedle(start, end) => {
-                    emitter.to_comment(start, end);
+            Comment => {
+                amt = 0;
+                match reader.read_fast_until(&[b'<', b'-']) {
+                    InterNeedle(start, end) => {
+                        emitter.to_comment(start, end);
+                    }
+                    Char(b'<') => {
+                        append_curr_char!(to_comment);
+                        switch_to!(CommentLessThan)
+                    }
+                    Char(b'-') => switch_to!(CommentEndDash),
+                    _ => {
+                        emitter.emit_error(Xml5Error::EofInComment);
+                        emitter.emit_comment();
+                        emitter.emit_eof();
+                    }
                 }
-                Char(b'<') => {
-                    append_curr_char!(to_comment);
-                    switch_to!(CommentLessThan)
-                }
-                Char(b'-') => switch_to!(CommentEndDash),
-                _ => {
-                    emitter.emit_error(Xml5Error::EofInComment);
-                    emitter.emit_comment();
-                    emitter.emit_eof();
-                }
-            },
+            }
             CommentLessThan => match next_char {
                 Some(b'!') => {
                     append_curr_char!(to_comment);
@@ -442,14 +467,17 @@ impl Tokenizer {
                     reconsume!(Comment)
                 }
             },
-            Cdata => match reader.read_fast_until(&[b']'], &mut amt) {
-                Char(b']') => switch_to!(CdataBracket),
-                InterNeedle(start, end) => emitter.emit_chars(start, end),
-                EOF | _ => {
-                    emitter.emit_error(Xml5Error::EofInCdata);
-                    reconsume!(Data);
+            Cdata => {
+                amt = 0;
+                match reader.read_fast_until(&[b']']) {
+                    Char(b']') => switch_to!(CdataBracket),
+                    InterNeedle(start, end) => emitter.emit_chars(start, end),
+                    EOF | _ => {
+                        emitter.emit_error(Xml5Error::EofInCdata);
+                        reconsume!(Data);
+                    }
                 }
-            },
+            }
             CdataBracket => match next_char {
                 Some(b']') => switch_to!(CdataEnd),
                 None => {
@@ -475,16 +503,19 @@ impl Tokenizer {
                     switch_to!(Cdata);
                 }
             },
-            BogusComment => match reader.read_fast_until(&[b'>'], &mut amt) {
-                Char(_) => {
-                    switch_to!(Data);
+            BogusComment => {
+                amt = 0;
+                match reader.read_fast_until(&[b'>']) {
+                    Char(_) => {
+                        switch_to!(Data);
+                    }
+                    InterNeedle(start, end) => emitter.to_comment(start, end),
+                    _ => {
+                        emitter.emit_comment();
+                        emitter.emit_eof();
+                    }
                 }
-                InterNeedle(start, end) => emitter.to_comment(start, end),
-                _ => {
-                    emitter.emit_comment();
-                    emitter.emit_eof();
-                }
-            },
+            }
             Doctype => match next_char {
                 Some(b'\t') | Some(b'\n') | Some(b' ') => switch_to!(BeforeDoctypeName),
                 None => {
@@ -647,7 +678,8 @@ impl Tokenizer {
                 }
             },
             DoctypeIdentifierDoubleQuoted(kind) => {
-                match reader.read_fast_until(&[b'"', b'>'], &mut amt) {
+                amt = 0;
+                match reader.read_fast_until(&[b'"', b'>']) {
                     Char(b'"') => switch_to!(AfterDoctypeIdentifier(kind)),
                     Char(b'>') => {
                         emitter.emit_error(Xml5Error::AbruptEndDoctypeIdentifier);
@@ -665,7 +697,8 @@ impl Tokenizer {
                 }
             }
             DoctypeIdentifierSingleQuoted(kind) => {
-                match reader.read_fast_until(&[b'\'', b'>'], &mut amt) {
+                amt = 0;
+                match reader.read_fast_until(&[b'\'', b'>']) {
                     Char(b'\'') => switch_to!(AfterDoctypeIdentifier(kind)),
                     Char(b'>') => {
                         emitter.emit_error(Xml5Error::AbruptEndDoctypeIdentifier);

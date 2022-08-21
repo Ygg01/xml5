@@ -1,8 +1,9 @@
+use std::borrow::Cow;
+use std::ops::Deref;
+use std::str::from_utf8_unchecked;
+
 use crate::encoding::Decoder;
 use crate::errors::Xml5Error;
-use crate::Token::{EndTag, StartTag};
-use std::borrow::Cow;
-use std::str::from_utf8_unchecked;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Token<'a> {
@@ -34,7 +35,7 @@ pub enum Token<'a> {
 
 impl<'a> Token<'a> {
     pub fn start_tag(cow: Cow<'a, [u8]>) -> Token<'_> {
-        StartTag(TagAndAttrText {
+        Token::StartTag(TagAndAttrText {
             name: cow,
             self_closing: false,
             name_len: 4,
@@ -42,21 +43,39 @@ impl<'a> Token<'a> {
     }
 
     pub fn end_tag(cow: Cow<'a, [u8]>) -> Token<'_> {
-        EndTag(BytesText { name: cow })
+        Token::EndTag(BytesText { name: cow })
+    }
+
+    pub fn error(err: Xml5Error) -> Token<'a> {
+        Token::Error(err)
+    }
+
+    pub fn get_name(&self) -> Option<&[u8]> {
+        match self {
+            Token::StartTag(start) => Some(start.name.deref()),
+            Token::EndTag(end) => Some(end.name.deref()),
+            _ => None,
+        }
+    }
+
+    pub fn get_target(&self) -> Option<&[u8]> {
+        match self {
+            Token::PI(pi) => Some(pi.get_target()),
+            _ => None,
+        }
+    }
+
+    pub fn get_data(&self) -> Option<&[u8]> {
+        match self {
+            Token::PI(pi) => Some(pi.get_data()),
+            _ => None,
+        }
     }
 }
 
-impl PartialEq<Token<'_>> for &str {
-    fn eq(&self, other: &Token<'_>) -> bool {
-        match other {
-            Token::Bom(ec) => self.as_bytes() == ec.buf.as_ref(),
-            Token::Text(bt)
-            | Token::EndTag(bt)
-            | Token::CData(bt)
-            | Token::Decl(bt)
-            | Token::Comment(bt) => self.as_bytes() == bt.name.as_ref(),
-            _ => false,
-        }
+impl PartialEq<BytesText<'_>> for &str {
+    fn eq(&self, other: &BytesText<'_>) -> bool {
+        self.as_bytes() == other.name.as_ref()
     }
 }
 
@@ -96,9 +115,25 @@ impl<'a> TagAndAttrText<'a> {
     }
 }
 
+impl<'a> Deref for TagAndAttrText<'a> {
+    type Target = [u8];
+
+    fn deref(&self) -> &[u8] {
+        self.name.deref()
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub struct BytesText<'a> {
     pub(crate) name: Cow<'a, [u8]>,
+}
+
+impl<'a> Deref for BytesText<'a> {
+    type Target = [u8];
+
+    fn deref(&self) -> &[u8] {
+        self.name.deref()
+    }
 }
 
 impl<'a> BytesText<'a> {
@@ -110,8 +145,18 @@ impl<'a> BytesText<'a> {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PiText<'a> {
-    pub(crate) name: Cow<'a, [u8]>,
-    pub(crate) value: Cow<'a, [u8]>,
+    pub(crate) target: Cow<'a, [u8]>,
+    pub(crate) data: Cow<'a, [u8]>,
+}
+
+impl<'a> PiText<'a> {
+    pub fn get_target(&self) -> &[u8] {
+        self.target.deref()
+    }
+
+    pub fn get_data(&self) -> &[u8] {
+        self.data.deref()
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
