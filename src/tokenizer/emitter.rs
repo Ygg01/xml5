@@ -1,17 +1,15 @@
 use std::collections::VecDeque;
+use std::mem;
 use std::ops::Range;
 
 use crate::errors::Xml5Error;
-use crate::tokenizer::emitter::Spans::{Characters, Span};
 use crate::tokenizer::DoctypeKind;
-use crate::{Token, Tokenizer};
+use crate::Tokenizer;
 
 pub trait Emitter {
     type Output;
 
     fn pop_token(&mut self) -> Option<Self::Output>;
-    fn emit_current_token(&mut self);
-
     fn create_tag(&mut self);
     fn append_tag(&mut self, start: usize, end: usize);
     fn create_end_tag(&mut self);
@@ -40,33 +38,45 @@ pub trait Emitter {
     fn emit_error(&mut self, err: Xml5Error);
     fn emit_chars(&mut self, start: usize, end: usize);
     fn emit_chars_now<T: IntoBytes>(&mut self, x: T);
+    fn emit_end_tag(&mut self);
     fn emit_tag(&mut self);
     fn emit_doctype(&mut self);
+
+    fn set_xml_declaration(&mut self, attr_name: XmlDeclAttr);
+    fn emit_decl_value(&mut self, start: usize, end: usize);
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum XmlDeclAttr {
+    Version,
+    Encoding,
+    Standalone,
 }
 
 pub trait IntoBytes {
-    // fn to_bytes(&self) -> [u8];
+    fn to_bytes(&self) -> Vec<u8>;
 }
 
 impl IntoBytes for u8 {
-    // fn to_bytes(&self) -> &[u8] {
-    //     *self.to_be_bytes()
-    // }
+    fn to_bytes(&self) -> Vec<u8> {
+        vec![*self]
+    }
 }
 
 impl IntoBytes for &str {
-    // fn to_bytes(&self) -> &[u8] {
-    //     self.as_bytes()
-    // }
+    fn to_bytes(&self) -> Vec<u8> {
+        self.as_bytes().to_vec()
+    }
 }
 
 #[derive(Default)]
 pub struct DefaultEmitter {
     tokens: VecDeque<SpanTokens>,
     current_token_type: CurrentToken,
-    current_token_bounds: Range<usize>,
-    current_token_secondary_bound: Range<usize>,
-    current_text: Vec<u8>,
+    current_token_bounds: Spans,
+    encoding: Spans,
+    current_token_secondary_bound: Spans,
+    current_attrs: Vec<(Spans, Spans)>,
 }
 
 pub enum SpanTokens {
@@ -76,32 +86,59 @@ pub enum SpanTokens {
     Comment(Spans),
     EndTag(Option<Spans>),
     PiData {
-        name: Spans,
-        value: Spans,
+        target: Spans,
+        data: Spans,
     },
     StartTag {
         self_close: bool,
         name: Spans,
-        attr: Vec<(Spans, Spans)>,
+        attrs: Vec<(Spans, Spans)>,
     },
     Error(Xml5Error),
     Eof,
 }
 
-pub enum Spans {
-    Span(Range<usize>),
-    Characters(Vec<u8>),
+#[derive(Default, Debug)]
+pub struct Spans {
+    pub(crate) data: Vec<Mix>,
 }
 
-impl DefaultEmitter {
-    #[inline(always)]
-    fn close_span(&mut self) {
-        self.current_token_bounds.start = self.current_token_bounds.end;
+impl Spans {
+    #[inline]
+    pub fn to_range(&self) -> Option<(usize, usize)> {
+        if self.data.len() == 1 {
+            if let Some(Mix::Range(start, end)) = self.data.first() {
+                return Some((*start, *end));
+            }
+        };
+        None
     }
 
     #[inline(always)]
-    fn close_span_secondary(&mut self) {
-        self.current_token_secondary_bound.start = self.current_token_secondary_bound.end;
+    pub fn add_span(&mut self, start: usize, end: usize) {
+        if let Some(Mix::Range(_, r2)) = self.data.last_mut() {
+            if &start == r2 {
+                *r2 = end;
+            }
+        } else {
+            self.data.push(Mix::Range(start, end));
+        }
+    }
+}
+
+#[derive(Debug)]
+pub enum Mix {
+    Range(usize, usize),
+    Owned(Vec<u8>),
+}
+
+impl Mix {
+    #[inline(always)]
+    pub const fn is_borrowed(&self) -> bool {
+        match self {
+            Mix::Owned(_) => true,
+            _ => false,
+        }
     }
 }
 
@@ -112,39 +149,14 @@ impl Emitter for DefaultEmitter {
         self.tokens.pop_front()
     }
 
-    fn emit_current_token(&mut self) {
-        let span = if !self.current_text.is_empty() {
-            let sp = Characters(self.current_text.clone());
-            sp
-        } else if !self.current_token_bounds.is_empty() {
-            Span(self.current_token_bounds.clone())
-        } else {
-            // No span skip emitting
-            return;
-        };
-        let tok = match self.current_token_type {
-            CurrentToken::EndTag => SpanTokens::EndTag(Some(span)),
-            _ => SpanTokens::Eof,
-        };
-        self.tokens.push_back(tok);
-        self.close_span();
-    }
-
     fn create_tag(&mut self) {}
 
     fn append_tag(&mut self, start: usize, end: usize) {
-        if self.current_token_bounds.start == start {
-            self.current_token_bounds.end = end;
-        } else {
-            self.emit_current_token();
-            self.current_token_bounds.start = start;
-            self.current_token_bounds.end = end;
-        }
+        self.current_token_bounds.add_span(start, end);
     }
 
     fn create_end_tag(&mut self) {
         self.current_token_type = CurrentToken::EndTag;
-        self.close_span();
     }
 
     fn set_empty_tag(&mut self) {
@@ -165,40 +177,26 @@ impl Emitter for DefaultEmitter {
 
     fn create_pi_tag(&mut self) {
         self.current_token_type = CurrentToken::ProcessingInstruction;
-        self.close_span();
-        self.close_span_secondary();
     }
 
     fn pi_data(&mut self, start: usize, end: usize) {
-        if self.current_token_bounds.start == start {
-            self.current_token_bounds.end = end;
-        } else {
-            self.emit_current_token();
-            self.current_token_bounds.start = start;
-            self.current_token_bounds.end = end;
-        }
+        self.current_token_bounds.add_span(start, end);
     }
 
     fn pi_target(&mut self, start: usize, end: usize) {
-        if self.current_token_secondary_bound.start == start {
-            self.current_token_secondary_bound.end = end;
-        } else {
-            self.emit_current_token();
-            self.current_token_secondary_bound.start = start;
-            self.current_token_secondary_bound.end = end;
-        }
+        self.current_token_secondary_bound.add_span(start, end);
     }
 
     fn create_doctype(&mut self) {
-        todo!()
+        self.current_token_type = CurrentToken::Doctype;
     }
 
     fn doctype_id(&mut self, start: usize, end: usize) {
-        todo!()
+        self.current_token_bounds.add_span(start, end);
     }
 
     fn doctype_name(&mut self, start: usize, end: usize) {
-        todo!()
+        self.current_token_secondary_bound.add_span(start, end);
     }
 
     fn doctype_name_now(&mut self, chr: u8) {
@@ -226,13 +224,13 @@ impl Emitter for DefaultEmitter {
     }
 
     fn emit_eof(&mut self) {
-        todo!()
+        self.tokens.push_back(SpanTokens::Eof);
     }
 
     fn emit_pi(&mut self) {
         self.tokens.push_back(SpanTokens::PiData {
-            name: Span(self.current_token_bounds.clone()),
-            value: Span(self.current_token_secondary_bound.clone()),
+            data: mem::take(&mut self.current_token_bounds),
+            target: mem::take(&mut self.current_token_secondary_bound),
         });
     }
 
@@ -241,18 +239,39 @@ impl Emitter for DefaultEmitter {
     }
 
     fn emit_chars(&mut self, start: usize, end: usize) {
-        todo!()
+        self.tokens.push_back(SpanTokens::Text(Spans {
+            data: vec![Mix::Range(start, end)],
+        }));
     }
 
     fn emit_chars_now<T: IntoBytes>(&mut self, x: T) {
         todo!()
     }
 
+    fn emit_end_tag(&mut self) {
+        self.tokens.push_back(SpanTokens::EndTag(Some(mem::take(
+            &mut self.current_token_bounds,
+        ))));
+    }
+
     fn emit_tag(&mut self) {
-        todo!()
+        // TODO add attributes
+        self.tokens.push_back(SpanTokens::StartTag {
+            name: mem::take(&mut self.current_token_bounds),
+            attrs: mem::take(&mut self.current_attrs),
+            self_close: false,
+        });
     }
 
     fn emit_doctype(&mut self) {
+        // self.tokens.push_back(SpanTokens::D)
+    }
+
+    fn set_xml_declaration(&mut self, attr_name: XmlDeclAttr) {
+        todo!()
+    }
+
+    fn emit_decl_value(&mut self, start: usize, end: usize) {
         todo!()
     }
 }
@@ -279,5 +298,5 @@ pub enum Test {
 }
 
 fn main() {
-    println!("{}", std::mem::size_of::<Test>());
+    println!("{}", mem::size_of::<Test>());
 }

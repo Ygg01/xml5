@@ -1,4 +1,5 @@
 use std::borrow::Cow;
+use std::borrow::Cow::Borrowed;
 use std::ops::Deref;
 use std::str::from_utf8_unchecked;
 
@@ -22,7 +23,7 @@ pub enum Token<'a> {
     /// CData `<![CDATA[...]]>`.
     CData(BytesText<'a>),
     /// XML declaration `<?xml ...?>`.
-    Decl(BytesText<'a>),
+    Declaration(BytesText<'a>),
     /// Processing instruction `<?...?>`.
     PI(PiText<'a>),
     /// Doctype `<!DOCTYPE ...>`.
@@ -34,22 +35,67 @@ pub enum Token<'a> {
 }
 
 impl<'a> Token<'a> {
-    pub fn start_tag(cow: Cow<'a, [u8]>) -> Token<'_> {
+    #[inline]
+    pub fn start_tag(cow: Cow<'a, [u8]>, attrs: Vec<(Cow<'a, [u8]>, Cow<'a, [u8]>)>) -> Token<'a> {
         Token::StartTag(TagAndAttrText {
             name: cow,
+            attrs,
             self_closing: false,
-            name_len: 4,
         })
     }
 
-    pub fn end_tag(cow: Cow<'a, [u8]>) -> Token<'_> {
-        Token::EndTag(BytesText { name: cow })
+    #[inline]
+    pub fn empty_tag(cow: Cow<'a, [u8]>, attrs: Vec<(Cow<'a, [u8]>, Cow<'a, [u8]>)>) -> Token<'a> {
+        Token::StartTag(TagAndAttrText {
+            name: cow,
+            attrs,
+            self_closing: true,
+        })
     }
 
+    #[inline]
+    pub fn end_tag(name: Cow<'a, [u8]>) -> Token<'_> {
+        Token::EndTag(BytesText { name })
+    }
+
+    #[inline]
+    pub fn pi_tag(data: Cow<'a, [u8]>, target: Cow<'a, [u8]>) -> Token<'a> {
+        Token::PI(PiText { data, target })
+    }
+
+    #[inline]
+    pub fn comment(name: Cow<'a, [u8]>) -> Token<'a> {
+        Token::Comment(BytesText { name })
+    }
+
+    #[inline]
+    pub fn declaration(text: Cow<'a, [u8]>) -> Token<'a> {
+        Token::Declaration(BytesText { name: text })
+    }
+
+    #[inline]
+    pub fn cdata(text: Cow<'a, [u8]>) -> Token<'a> {
+        Token::CData(BytesText { name: text })
+    }
+
+    #[inline]
+    pub fn auto_close_tag() -> Token<'a> {
+        Token::EndTag(BytesText {
+            name: Cow::default(),
+        })
+    }
+
+    #[inline]
+    pub fn text(text: Cow<'a, [u8]>) -> Token<'a> {
+        Token::Text(BytesText { name: text })
+    }
+
+    #[inline]
     pub fn error(err: Xml5Error) -> Token<'a> {
         Token::Error(err)
     }
 
+    #[inline]
     pub fn get_name(&self) -> Option<&[u8]> {
         match self {
             Token::StartTag(start) => Some(start.name.deref()),
@@ -58,6 +104,7 @@ impl<'a> Token<'a> {
         }
     }
 
+    #[inline]
     pub fn get_target(&self) -> Option<&[u8]> {
         match self {
             Token::PI(pi) => Some(pi.get_target()),
@@ -65,9 +112,26 @@ impl<'a> Token<'a> {
         }
     }
 
+    #[inline]
     pub fn get_data(&self) -> Option<&[u8]> {
         match self {
             Token::PI(pi) => Some(pi.get_data()),
+            _ => None,
+        }
+    }
+
+    #[inline]
+    pub fn get_text(&self) -> Option<&[u8]> {
+        match self {
+            Token::Text(text) | Token::CData(text) => Some(text.as_ref()),
+            _ => None,
+        }
+    }
+
+    #[inline]
+    pub fn get_declaration(&self) -> Option<&[u8]> {
+        match self {
+            Token::Declaration(text) => Some(text.as_ref()),
             _ => None,
         }
     }
@@ -89,8 +153,8 @@ pub struct EncodedText<'a> {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TagAndAttrText<'a> {
     pub name: Cow<'a, [u8]>,
+    pub attrs: Vec<(Cow<'a, [u8]>, Cow<'a, [u8]>)>,
     pub(crate) self_closing: bool,
-    pub(crate) name_len: usize,
 }
 
 impl<'a> TagAndAttrText<'a> {

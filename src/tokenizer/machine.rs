@@ -3,14 +3,14 @@ use std::io::BufRead;
 use FastRead::EOF;
 
 use crate::errors::Xml5Error;
-use crate::tokenizer::emitter::{DefaultEmitter, Emitter};
+use crate::tokenizer::emitter::{DefaultEmitter, Emitter, XmlDeclAttr};
 use crate::tokenizer::reader::FastRead::{Char, InterNeedle};
 use crate::tokenizer::reader::{FastRead, Reader, SliceReader};
 use crate::tokenizer::AttrValueKind::{DoubleQuoted, SingleQuoted, Unquoted};
 use crate::tokenizer::Control::Eof;
 use crate::tokenizer::DoctypeKind::{Public, System};
 use crate::tokenizer::TokenState::*;
-use crate::tokenizer::{Control, SliceIterator};
+use crate::tokenizer::{Control, DeclQuote, SliceIterator};
 use crate::Tokenizer;
 
 impl Tokenizer {
@@ -113,7 +113,7 @@ impl Tokenizer {
                         switch_to!(EndTagNameAfter);
                     }
                     Char(b'>') => {
-                        emitter.emit_current_token();
+                        emitter.emit_end_tag();
                         switch_to!(Data);
                     }
                     InterNeedle(start, end) => emitter.append_tag(start, end),
@@ -124,7 +124,7 @@ impl Tokenizer {
             }
             EndTagNameAfter => match next_char {
                 Some(b'>') => {
-                    emitter.emit_tag();
+                    emitter.emit_end_tag();
                     switch_to!(Data);
                 }
                 Some(b' ') | Some(b'\n') | Some(b'\t') => {}
@@ -291,17 +291,106 @@ impl Tokenizer {
                     }
                 }
             }
-            Pi => match next_char {
-                None | Some(b' ') | Some(b'\n') | Some(b'\t') => {
-                    emitter.emit_error(Xml5Error::UnexpectedSymbolOrEof(next_char));
-                    reconsume!(BogusComment);
+            Pi => {
+                amt = 0;
+                if reader.try_read_slice_exact("xml") {
+                    switch_to!(XmlDecl);
+                } else {
+                    match next_char {
+                        None | Some(b' ') | Some(b'\n') | Some(b'\t') => {
+                            emitter.emit_error(Xml5Error::UnexpectedSymbolOrEof(next_char));
+                            reconsume!(BogusComment);
+                        }
+                        Some(_) => {
+                            emitter.create_pi_tag();
+                            reconsume!(PiTarget);
+                        }
+                    }
+                }
+            }
+            XmlDecl => match next_char {
+                Some(b'\t') | Some(b'\n') | Some(b' ') => {}
+                Some(b'v') | Some(b'e') | Some(b's') => {
+                    reconsume!(XmlDeclAttrName)
                 }
                 Some(_) => {
-                    emitter.create_pi_tag();
-                    append_curr_char!(pi_data);
-                    switch_to!(PiTarget);
+                    // TODO
+                    // emitter.pi_target(xml)
+                    emitter.emit_error(Xml5Error::InvalidXmlDeclaration);
+                }
+                None => {
+                    // TODO
+                    // emitter.pi_target()
+                    emitter.emit_error(Xml5Error::EofInXmlDeclaration);
                 }
             },
+            XmlDeclAttrName => {
+                amt = 0;
+                if reader.try_read_slice_exact("version") {
+                    emitter.set_xml_declaration(XmlDeclAttr::Version);
+                    switch_to!(XmlDeclAttrNameAfter);
+                } else if reader.try_read_slice_exact("encoding") {
+                    emitter.set_xml_declaration(XmlDeclAttr::Encoding);
+                    switch_to!(XmlDeclAttrNameAfter);
+                } else if reader.try_read_slice_exact("standalone") {
+                    emitter.set_xml_declaration(XmlDeclAttr::Standalone);
+                    switch_to!(XmlDeclAttrNameAfter);
+                } else {
+                    emitter.emit_error(Xml5Error::InvalidXmlDeclaration);
+                    // TODO
+                    // emitter.pi_target()
+                    switch_to!(PiTarget);
+                }
+            }
+            XmlDeclAttrNameAfter => match next_char {
+                Some(b'\t') | Some(b'\n') | Some(b' ') => {}
+                Some(b'=') => switch_to!(XmlDeclAttrValueBefore),
+                Some(_) => reconsume!(PiTarget),
+                None => {
+                    emitter.emit_error(Xml5Error::EofInXmlDeclaration);
+                }
+            },
+            XmlDeclAttrValueBefore => match next_char {
+                Some(b'\t') | Some(b'\n') | Some(b' ') => {}
+                Some(b'\'') => switch_to!(XmlDeclAttrValue(DeclQuote::SingleQuoted)),
+                Some(b'"') => switch_to!(XmlDeclAttrValue(DeclQuote::DoubleQuoted)),
+                Some(_) => reconsume!(PiTarget),
+                None => {
+                    emitter.emit_error(Xml5Error::EofInXmlDeclaration);
+                }
+            },
+            XmlDeclAttrValue(DeclQuote::DoubleQuoted) => {
+                amt = 0;
+                match reader.read_fast_until(&[b'"', b'?']) {
+                    Char(b'"') => {
+                        switch_to!(XmlDecl)
+                    }
+                    Char(b'?') => {
+                        // emitter.emit_xml_decl();
+                        emitter.emit_error(Xml5Error::AbruptClosingXmlDeclaration);
+                        switch_to!(PiAfter);
+                    }
+                    InterNeedle(start, end) => emitter.emit_decl_value(start, end),
+                    EOF | _ => {
+                        emitter.emit_error(Xml5Error::EofInXmlDeclaration);
+                    }
+                }
+            }
+            XmlDeclAttrValue(DeclQuote::SingleQuoted) => {
+                amt = 0;
+                match reader.read_fast_until(&[b'\'', b'?']) {
+                    Char(b'\'') => switch_to!(XmlDecl),
+                    Char(b'?') => {
+                        emitter.emit_error(Xml5Error::AbruptClosingXmlDeclaration);
+                        switch_to!(PiAfter);
+                    }
+                    InterNeedle(start, end) => emitter.emit_decl_value(start, end),
+                    EOF | _ => {
+                        emitter.emit_error(Xml5Error::EofInXmlDeclaration);
+                    }
+                }
+            }
+            XmlDeclAfter => {}
             PiTarget => {
                 amt = 0;
                 match reader.read_fast_until(&[b'\t', b'\n', b' ']) {
@@ -552,7 +641,7 @@ impl Tokenizer {
                 }
             },
             DoctypeName => match next_char {
-                Some(b'\t') | Some(b'\n') | Some(b' ') => switch_to!(AfterDoctypeName),
+                Some(b'\t') | Some(b'\n') | Some(b' ') => switch_to!(AfterDoctypeName(0)),
                 Some(b'>') => {
                     emitter.emit_doctype();
                     switch_to!(Data);
@@ -571,210 +660,27 @@ impl Tokenizer {
                     emitter.doctype_name_now(chr);
                     switch_to!(DoctypeName);
                 }
+                _ => {}
             },
-            AfterDoctypeName => match next_char {
-                Some(b'\t') | Some(b'\n') | Some(b' ') => (),
-                Some(b'>') => {
-                    switch_to!(Data);
-                    emitter.emit_doctype();
-                }
-                None => {
-                    emitter.emit_error(Xml5Error::EofInDoctype);
-                    emitter.emit_doctype();
-                    emitter.emit_eof();
-                }
-                _ => {
-                    if reader.try_read_slice("PUBLIC", false) {
-                        switch_to!(AfterDoctypeKeyword(Public))
-                    } else if reader.try_read_slice("SYSTEM", false) {
-                        switch_to!(AfterDoctypeKeyword(System))
+            AfterDoctypeName(depth) => match reader.read_fast_until(&[b'[', b']', b'>']) {
+                Char(b'[') => switch_to!(AfterDoctypeName(depth + 1)),
+                Char(b']') => {
+                    if depth == 0 {
+                        switch_to!(BogusDoctype);
                     } else {
-                        emitter.emit_error(Xml5Error::InvalidCharactersInAfterDoctypeName);
-                        switch_to!(BogusComment);
+                        switch_to!(AfterDoctypeName(depth - 1));
                     }
                 }
-            },
-            AfterDoctypeKeyword(Public) => match next_char {
-                Some(b'\t') | Some(b'\n') | Some(b' ') => {
-                    switch_to!(BeforeDoctypeIdentifier(Public))
-                }
-                Some(b'"') => {
-                    emitter.emit_error(Xml5Error::MissingWhitespaceAfterDoctypeKeyword);
-                    emitter.clear_doctype_id(Public);
-                    switch_to!(DoctypeIdentifierDoubleQuoted(Public));
-                }
-                Some(b'\'') => {
-                    emitter.emit_error(Xml5Error::MissingWhitespaceAfterDoctypeKeyword);
-                    emitter.clear_doctype_id(Public);
-                    switch_to!(DoctypeIdentifierSingleQuoted(Public));
-                }
-                Some(b'>') => {
-                    emitter.emit_error(Xml5Error::MissingWhitespaceAfterDoctypeKeyword);
-                    emitter.clear_doctype_id(Public);
+                Char(b'>') if depth == 0 => {
+                    emitter.emit_doctype();
                     switch_to!(Data);
                 }
-                None => {
-                    emitter.emit_error(Xml5Error::EofInDoctype);
+                EOF => {
                     emitter.emit_doctype();
+                    emitter.emit_error(Xml5Error::EofInDoctype);
                     emitter.emit_eof();
                 }
-                _ => {
-                    emitter.emit_error(Xml5Error::MissingQuoteBeforeIdentifier);
-                    reconsume!(BogusDoctype);
-                }
-            },
-            AfterDoctypeKeyword(System) => match next_char {
-                Some(b'\t') | Some(b'\n') | Some(b' ') => {
-                    switch_to!(BeforeDoctypeIdentifier(System))
-                }
-                Some(b'"') => {
-                    emitter.emit_error(Xml5Error::MissingWhitespaceAfterDoctypeKeyword);
-                    emitter.clear_doctype_id(System);
-                    switch_to!(DoctypeIdentifierDoubleQuoted(System));
-                }
-                Some(b'\'') => {
-                    emitter.emit_error(Xml5Error::MissingWhitespaceAfterDoctypeKeyword);
-                    emitter.clear_doctype_id(System);
-                    switch_to!(DoctypeIdentifierSingleQuoted(System));
-                }
-                Some(b'>') => {
-                    emitter.emit_error(Xml5Error::MissingWhitespaceAfterDoctypeKeyword);
-                    emitter.clear_doctype_id(System);
-                    switch_to!(Data);
-                }
-                None => {
-                    emitter.emit_error(Xml5Error::EofInDoctype);
-                    emitter.emit_doctype();
-                    emitter.emit_eof();
-                }
-                _ => {
-                    emitter.emit_error(Xml5Error::MissingQuoteBeforeIdentifier);
-                    reconsume!(BogusDoctype);
-                }
-            },
-            BeforeDoctypeIdentifier(kind) => match next_char {
-                Some(b'\t') | Some(b'\n') | Some(b' ') => (),
-                Some(b'"') => {
-                    emitter.clear_doctype_id(kind);
-                    switch_to!(DoctypeIdentifierDoubleQuoted(kind));
-                }
-                Some(b'\'') => {
-                    emitter.clear_doctype_id(kind);
-                    switch_to!(DoctypeIdentifierSingleQuoted(kind));
-                }
-                Some(b'>') => {
-                    emitter.emit_error(Xml5Error::MissingDoctypeIdentifier);
-                    switch_to!(Data);
-                    emitter.emit_doctype();
-                }
-                None => {
-                    emitter.emit_error(Xml5Error::EofInDoctype);
-                    emitter.emit_doctype();
-                    emitter.emit_eof();
-                }
-                _ => {
-                    emitter.emit_error(Xml5Error::MissingQuoteBeforeIdentifier);
-                    reconsume!(BogusDoctype);
-                }
-            },
-            DoctypeIdentifierDoubleQuoted(kind) => {
-                amt = 0;
-                match reader.read_fast_until(&[b'"', b'>']) {
-                    Char(b'"') => switch_to!(AfterDoctypeIdentifier(kind)),
-                    Char(b'>') => {
-                        emitter.emit_error(Xml5Error::AbruptEndDoctypeIdentifier);
-                        switch_to!(Data);
-                        emitter.emit_doctype();
-                    }
-                    InterNeedle(start, end) => {
-                        emitter.doctype_id(start, end);
-                    }
-                    _ => {
-                        emitter.emit_error(Xml5Error::EofInDoctype);
-                        emitter.emit_doctype();
-                        emitter.emit_eof();
-                    }
-                }
-            }
-            DoctypeIdentifierSingleQuoted(kind) => {
-                amt = 0;
-                match reader.read_fast_until(&[b'\'', b'>']) {
-                    Char(b'\'') => switch_to!(AfterDoctypeIdentifier(kind)),
-                    Char(b'>') => {
-                        emitter.emit_error(Xml5Error::AbruptEndDoctypeIdentifier);
-                        switch_to!(Data);
-                        emitter.emit_doctype();
-                    }
-                    InterNeedle(start, end) => {
-                        emitter.doctype_id(start, end);
-                    }
-                    _ => {
-                        emitter.emit_error(Xml5Error::EofInDoctype);
-                        emitter.emit_doctype();
-                        emitter.emit_eof();
-                    }
-                }
-            }
-            AfterDoctypeIdentifier(Public) => match next_char {
-                Some(b'\t') | Some(b'\n') | Some(b' ') => {
-                    switch_to!(BetweenDoctypePublicAndSystemIdentifiers)
-                }
-                Some(b'>') => {
-                    switch_to!(Data);
-                    emitter.emit_doctype();
-                }
-                Some(b'"') => {
-                    emitter.emit_error(Xml5Error::MissingWhitespaceBetweenDoctypePublicAndSystem);
-                    switch_to!(DoctypeIdentifierDoubleQuoted(System));
-                }
-                Some(b'\'') => {
-                    emitter.emit_error(Xml5Error::MissingWhitespaceBetweenDoctypePublicAndSystem);
-                    switch_to!(DoctypeIdentifierSingleQuoted(System));
-                }
-                None => {
-                    emitter.emit_error(Xml5Error::EofInDoctype);
-                    emitter.emit_doctype();
-                    emitter.emit_eof();
-                }
-                _ => {
-                    emitter.emit_error(Xml5Error::MissingQuoteBeforeIdentifier);
-                    reconsume!(BogusDoctype);
-                }
-            },
-            BetweenDoctypePublicAndSystemIdentifiers => match next_char {
-                Some(b'\t') | Some(b'\n') | Some(b' ') => (),
-                Some(b'"') => {
-                    emitter.clear_doctype_id(System);
-                    switch_to!(DoctypeIdentifierDoubleQuoted(System))
-                }
-                Some(b'\'') => {
-                    emitter.clear_doctype_id(System);
-                    switch_to!(DoctypeIdentifierSingleQuoted(System))
-                }
-                Some(b'>') => {
-                    switch_to!(Data);
-                    emitter.emit_doctype();
-                }
-                None => {
-                    emitter.emit_error(Xml5Error::EofInDoctype);
-                    emitter.emit_doctype();
-                    emitter.emit_eof();
-                }
-                _ => {
-                    emitter.emit_error(Xml5Error::MissingQuoteBeforeIdentifier);
-                    reconsume!(BogusDoctype);
-                }
-            },
-            AfterDoctypeIdentifier(System) => match next_char {
-                Some(b'\t') | Some(b'\n') | Some(b' ') => (),
-                Some(b'>') => {
-                    emitter.emit_doctype();
-                    switch_to!(Data);
-                }
-                _ => {
-                    emitter.emit_error(Xml5Error::MissingQuoteBeforeIdentifier);
-                    reconsume!(BogusDoctype);
-                }
+                _ => {}
             },
             BogusDoctype => match next_char {
                 Some(b'>') => {

@@ -1,12 +1,13 @@
 use std::borrow::Cow;
 
 use crate::errors::Xml5Error;
-use crate::tokenizer::emitter::SpanTokens::EndTag;
-use crate::tokenizer::emitter::{Emitter, SpanTokens, Spans};
+use crate::tokenizer::emitter::{Emitter, Mix, SpanTokens, Spans};
 #[cfg(feature = "encoding")]
 use crate::tokenizer::encoding::EncodingRef;
 use crate::tokenizer::reader::{BuffReader, Reader, SliceReader};
+use crate::tokenizer::TokenState::Cdata;
 use crate::Token;
+use crate::Token::Text;
 
 mod decoding;
 mod emitter;
@@ -21,7 +22,6 @@ pub struct Tokenizer {
     state: TokenState,
     /// End of file reached - parsing stops
     eof: bool,
-    reader_pos: usize,
     /// encoding specified in the xml, or utf8 if none found
     #[cfg(feature = "encoding")]
     encoder_ref: EncodingRef,
@@ -43,7 +43,7 @@ where
     type Item = Token<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let x = loop {
+        let span = loop {
             if let Some(token) = self.emitter.pop_token() {
                 break token;
             } else if !self.state.eof {
@@ -59,21 +59,58 @@ where
                 return None;
             }
         };
-        match x {
-            EndTag(Some(sp)) => Some(Token::end_tag(self.to_cow(sp))),
+        Some(match span {
+            SpanTokens::EndTag(Some(sp)) => Token::end_tag(self.to_cow(sp)),
+            SpanTokens::PiData { data, target } => {
+                Token::pi_tag(self.to_cow(data), self.to_cow(target))
+            }
 
-            _ => None,
-        }
+            SpanTokens::Comment(text) => Token::comment(self.to_cow(text)),
+            SpanTokens::Decl(text) => Token::declaration(self.to_cow(text)),
+            SpanTokens::CData(text) => Token::cdata(self.to_cow(text)),
+
+            SpanTokens::Text(text) => Token::text(self.to_cow(text)),
+            SpanTokens::StartTag {
+                name,
+                attrs,
+                self_close: true,
+                ..
+            } => Token::start_tag(self.to_cow(name), self.to_attrs(attrs)),
+            SpanTokens::StartTag {
+                name,
+                attrs,
+                self_close: false,
+                ..
+            } => Token::empty_tag(self.to_cow(name), self.to_attrs(attrs)),
+            SpanTokens::Error(err) => Token::Error(err),
+            SpanTokens::Eof => Token::Eof,
+            SpanTokens::EndTag(None) => Token::auto_close_tag(),
+        })
     }
 }
 
 impl<'a, E> SliceIterator<'a, E> {
-    #[inline(always)]
     fn to_cow(&self, span: Spans) -> Cow<'a, [u8]> {
-        match span {
-            Spans::Span(range) => Cow::Borrowed(&self.reader.slice[range]),
-            Spans::Characters(vc) => Cow::Owned(vc),
+        if let Some((start, end)) = span.to_range() {
+            Cow::Borrowed(&self.reader.slice[start..end])
+        } else {
+            let mut vec = vec![];
+            for datum in span.data {
+                match datum {
+                    Mix::Owned(bytes) => vec.extend_from_slice(&bytes),
+                    Mix::Range(s, e) => vec.extend_from_slice(&self.reader.slice[s..e]),
+                }
+            }
+            Cow::Owned(vec)
         }
+    }
+
+    fn to_attrs(&self, attrs: Vec<(Spans, Spans)>) -> Vec<(Cow<'a, [u8]>, Cow<'a, [u8]>)> {
+        let mut vec = vec![];
+        for (name, val) in attrs {
+            vec.push((self.to_cow(name), self.to_cow(val)));
+        }
+        vec
     }
 }
 
@@ -82,33 +119,6 @@ pub struct BufIterator<'a, R, E> {
     reader: BuffReader<'a, R>,
     emitter: E,
 }
-
-// impl<'a, R, E> Iterator for BufIterator<'a, R, E>
-// where
-//     R: BufRead,
-//     E: Emitter<OutToken = Token<'a>>,
-// {
-//     type Item = Token<'a>;
-//
-//     fn next(&mut self) -> Option<Token<'a>> {
-//         loop {
-//             if let Some(token) = self.emitter.pop_token() {
-//                 break Some(token);
-//             } else if !self.state.eof {
-//                 match self.state.next_state(&mut self.reader, &mut self.emitter) {
-//                     Control::Continue => (),
-//                     Control::Eof => {
-//                         self.state.eof = true;
-//                         self.emitter.emit_eof();
-//                     }
-//                     Control::Err(e) => break Some(Token::Error(e)),
-//                 }
-//             } else {
-//                 break None;
-//             }
-//         }
-//     }
-// }
 
 pub(crate) enum Control {
     Continue,
@@ -130,6 +140,12 @@ enum TokenState {
     PiTargetAfter,
     PiData,
     PiAfter,
+    XmlDecl,
+    XmlDeclAttrName,
+    XmlDeclAttrNameAfter,
+    XmlDeclAttrValueBefore,
+    XmlDeclAttrValue(DeclQuote),
+    XmlDeclAfter,
     MarkupDecl,
     CommentStart,
     CommentStartDash,
@@ -155,13 +171,7 @@ enum TokenState {
     Doctype,
     BeforeDoctypeName,
     DoctypeName,
-    AfterDoctypeName,
-    AfterDoctypeKeyword(DoctypeKind),
-    BeforeDoctypeIdentifier(DoctypeKind),
-    DoctypeIdentifierDoubleQuoted(DoctypeKind),
-    DoctypeIdentifierSingleQuoted(DoctypeKind),
-    AfterDoctypeIdentifier(DoctypeKind),
-    BetweenDoctypePublicAndSystemIdentifiers,
+    AfterDoctypeName(usize),
     BogusDoctype,
 }
 
@@ -175,6 +185,20 @@ impl Default for TokenState {
 #[doc(hidden)]
 pub enum AttrValueKind {
     Unquoted,
+    SingleQuoted,
+    DoubleQuoted,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[doc(hidden)]
+pub enum DeclQuote {
+    SingleQuoted,
+    DoubleQuoted,
+}
+
+#[derive(Debug, Clone, Copy)]
+#[doc(hidden)]
+pub enum XmlDeclQuoteKind {
     SingleQuoted,
     DoubleQuoted,
 }

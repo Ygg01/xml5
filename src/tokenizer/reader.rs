@@ -156,7 +156,7 @@ impl<'r> Reader<'r> for SliceReader<'r> {
         }
 
         let read = if case_sensitive {
-            self.slice[self.pos..needle.len()].starts_with(needle.as_bytes())
+            self.slice[self.pos..self.pos + needle.len()].starts_with(needle.as_bytes())
         } else {
             needle.as_bytes().iter().enumerate().all(|(offset, char)| {
                 self.slice[self.pos + offset].to_ascii_lowercase() == char.to_ascii_lowercase()

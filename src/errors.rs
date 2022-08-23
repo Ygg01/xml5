@@ -8,12 +8,14 @@ pub type Xml5Result<T> = std::result::Result<T, Xml5Error>;
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub enum Xml5Error {
     AbruptClosingEmptyComment,
+    AbruptClosingXmlDeclaration,
     AbruptEndDoctypeIdentifier,
     ColonBeforeAttrName,
     EofInCdata,
     EofInComment,
     EofInDoctype,
     EofInTag,
+    EofInXmlDeclaration,
     GreaterThanInComment,
     InvalidCharactersInAfterDoctypeName,
     IncorrectlyOpenedComment,
@@ -23,6 +25,7 @@ pub enum Xml5Error {
     MissingQuoteBeforeIdentifier,
     MissingDoctypeName,
     MissingDoctypeIdentifier,
+    InvalidXmlDeclaration,
     UnexpectedSymbolOrEof(Option<u8>),
     UnexpectedSymbol(char),
     UnexpectedEof,
