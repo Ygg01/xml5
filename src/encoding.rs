@@ -29,7 +29,11 @@ use std::borrow::Cow;
 #[cfg(feature = "encoding")]
 use encoding_rs::{Encoding, UTF_16BE, UTF_16LE, UTF_8};
 
-use crate::errors::Xml5Result;
+use crate::errors::Xml5Error;
+#[cfg(feature = "encoding")]
+use crate::Error;
+
+pub type Result<T> = std::result::Result<T, Xml5Error>;
 
 /// Decoder of byte slices into strings.
 ///
@@ -51,7 +55,7 @@ pub struct Decoder {
 }
 
 impl Decoder {
-    pub(crate) fn utf8() -> Self {
+    pub fn utf8() -> Self {
         Decoder {
             #[cfg(feature = "encoding")]
             encoding: UTF_8,
@@ -73,7 +77,7 @@ impl Decoder {
     ///
     /// If you instead want to use XML declared encoding, use the `encoding` feature
     #[inline]
-    pub fn decode<'b>(&self, bytes: &'b [u8]) -> Xml5Result<Cow<'b, str>> {
+    pub fn decode<'b>(&self, bytes: &'b [u8]) -> Result<Cow<'b, str>> {
         Ok(Cow::Borrowed(std::str::from_utf8(bytes)?))
     }
 
@@ -83,7 +87,7 @@ impl Decoder {
     /// Returns an error in case of malformed sequences in the `bytes`.
     ///
     /// If you instead want to use XML declared encoding, use the `encoding` feature
-    pub fn decode_with_bom_removal<'b>(&self, bytes: &'b [u8]) -> Xml5Result<Cow<'b, str>> {
+    pub fn decode_with_bom_removal<'b>(&self, bytes: &'b [u8]) -> Result<Cow<'b, str>> {
         let bytes = if bytes.starts_with(&[0xEF, 0xBB, 0xBF]) {
             &bytes[3..]
         } else {
@@ -109,7 +113,7 @@ impl Decoder {
     /// in the `bytes`.
     ///
     /// Returns an error in case of malformed sequences in the `bytes`.
-    pub fn decode<'b>(&self, bytes: &'b [u8]) -> Xml5Result<Cow<'b, str>> {
+    pub fn decode<'b>(&self, bytes: &'b [u8]) -> Result<Cow<'b, str>> {
         decode(bytes, self.encoding)
     }
 
@@ -122,27 +126,28 @@ impl Decoder {
     /// If XML declaration is absent in the XML, UTF-8 is used.
     ///
     /// Returns an error in case of malformed sequences in the `bytes`.
-    pub fn decode_with_bom_removal<'b>(&self, bytes: &'b [u8]) -> Xml5Result<Cow<'b, str>> {
+    pub fn decode_with_bom_removal<'b>(&self, bytes: &'b [u8]) -> Result<Cow<'b, str>> {
         self.decode(remove_bom(bytes, self.encoding))
     }
 }
 
-/// Decodes the provided bytes using the specified encoding.
+/// Decodes the provided bytes using the specified encoding, ignoring the BOM
+/// if it is present in the `bytes`.
 ///
-/// Returns an error in case of malformed or non-representable sequences in the `bytes`.
+/// Returns an error in case of malformed sequences in the `bytes`.
 #[cfg(feature = "encoding")]
-pub fn decode<'b>(bytes: &'b [u8], encoding: &'static Encoding) -> Xml5Result<Cow<'b, str>> {
+pub fn decode<'b>(bytes: &'b [u8], encoding: &'static Encoding) -> Result<Cow<'b, str>> {
     encoding
         .decode_without_bom_handling_and_without_replacement(bytes)
-        .ok_or(Xml5Result::NonDecodable(None))
+        .ok_or(Xml5Error::NonDecodable(None))
 }
 
 /// Decodes a slice with an unknown encoding, removing the BOM if it is present
 /// in the bytes.
 ///
-/// Returns an error in case of malformed or non-representable sequences in the `bytes`.
+/// Returns an error in case of malformed sequences in the `bytes`.
 #[cfg(feature = "encoding")]
-pub fn decode_with_bom_removal<'b>(bytes: &'b [u8]) -> Xml5Result<Cow<'b, str>> {
+pub fn decode_with_bom_removal<'b>(bytes: &'b [u8]) -> Result<Cow<'b, str>> {
     if let Some(encoding) = detect_encoding(bytes) {
         let bytes = remove_bom(bytes, encoding);
         decode(bytes, encoding)
@@ -206,3 +211,5 @@ pub fn detect_encoding(bytes: &[u8]) -> Option<&'static Encoding> {
         _ => None,
     }
 }
+
+// TODO: add some tests for functions

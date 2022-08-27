@@ -1,13 +1,15 @@
 // Temporary disable
 #![allow(unused_must_use)]
 
+extern crate core;
 #[cfg(feature = "encoding_rs")]
 extern crate encoding_rs;
-extern crate core;
 
-mod tokenizer;
+pub use tokenizer::Tokenizer;
+
+pub use crate::events::Token;
+
+pub mod encoding;
 mod errors;
 mod events;
-
-pub use tokenizer::{Tokenizer};
-pub use crate::events::Token;
+mod tokenizer;

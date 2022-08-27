@@ -1,69 +1,123 @@
-use std::io::{BufRead};
+use std::borrow::Cow;
 
-#[cfg(feature = "encoding_rs")]
-use encoding_rs::Encoding;
-use crate::errors::{Xml5Error, Xml5Result};
+use crate::errors::Xml5Error;
+use crate::tokenizer::emitter::{Emitter, Mix, SpanTokens, Spans};
+#[cfg(feature = "encoding")]
+use crate::tokenizer::encoding::EncodingRef;
+use crate::tokenizer::reader::{BuffReader, Reader, SliceReader};
+use crate::tokenizer::TokenState::Cdata;
 use crate::Token;
-
-use crate::tokenizer::emitter::{DefaultEmitter, Emitter};
+use crate::Token::Text;
 
 mod decoding;
-mod reader;
-mod machine;
 mod emitter;
+#[cfg(feature = "encoding")]
+mod encoding;
+mod machine;
+mod reader;
 
-
-pub struct Tokenizer<'b, S: BufRead, E: Emitter = DefaultEmitter> {
-    pub(crate) source: S,
-    pub(crate) buffer: &'b mut Vec<u8>,
-    emitter: E,
+#[derive(Default)]
+pub struct Tokenizer {
     /// which state is the tokenizer in
     state: TokenState,
     /// End of file reached - parsing stops
     eof: bool,
-    allowed_char: Option<u8>,
-    pos: usize,
     /// encoding specified in the xml, or utf8 if none found
     #[cfg(feature = "encoding")]
-    encoding: &'static Encoding,
+    encoder_ref: EncodingRef,
     /// checks if xml5 could identify encoding
     #[cfg(feature = "encoding")]
     is_encoding_set: bool,
 }
 
-impl<'a, R: BufRead> Tokenizer<'a, R> {
-    pub fn from_reader(source: R, buffer: &'a mut Vec<u8>) -> Self {
-        Tokenizer::new_with_emitter(source, DefaultEmitter::default(), buffer)
-    }
+pub struct SliceIterator<'a, E> {
+    state: Tokenizer,
+    reader: SliceReader<'a>,
+    emitter: E,
 }
 
-impl<'a> Tokenizer<'a, &'a [u8]> {
-    pub fn from_str(s: &'a str, buffer: &'a mut Vec<u8>) -> Self {
-        Tokenizer::new_with_emitter(s.as_bytes(), DefaultEmitter::default(), buffer)
-    }
-}
+impl<'a, E> Iterator for SliceIterator<'a, E>
+where
+    E: Emitter<Output = SpanTokens>,
+{
+    type Item = Token<'a>;
 
-impl<'a, R: BufRead, E: Emitter<OutToken=Token>> Iterator for Tokenizer<'a, R, E> {
-    type Item = Token;
-
-    fn next(&mut self) -> Option<Token> {
-        loop {
+    fn next(&mut self) -> Option<Self::Item> {
+        let span = loop {
             if let Some(token) = self.emitter.pop_token() {
-                break Some(token);
-            } else if !self.eof {
-                match self.next_state() {
+                break token;
+            } else if !self.state.eof {
+                match self.state.next_state(&mut self.reader, &mut self.emitter) {
                     Control::Continue => (),
                     Control::Eof => {
-                        self.eof = true;
+                        self.state.eof = true;
                         self.emitter.emit_eof();
                     }
-                    Control::Err(e) => break Some(Token::Error(e))
+                    _ => return None,
                 }
             } else {
-                break None;
+                return None;
             }
+        };
+        Some(match span {
+            SpanTokens::EndTag(Some(sp)) => Token::end_tag(self.to_cow(sp)),
+            SpanTokens::PiData { data, target } => {
+                Token::pi_tag(self.to_cow(data), self.to_cow(target))
+            }
+
+            SpanTokens::Comment(text) => Token::comment(self.to_cow(text)),
+            SpanTokens::Decl(text) => Token::declaration(self.to_cow(text)),
+            SpanTokens::CData(text) => Token::cdata(self.to_cow(text)),
+
+            SpanTokens::Text(text) => Token::text(self.to_cow(text)),
+            SpanTokens::StartTag {
+                name,
+                attrs,
+                self_close: true,
+                ..
+            } => Token::start_tag(self.to_cow(name), self.to_attrs(attrs)),
+            SpanTokens::StartTag {
+                name,
+                attrs,
+                self_close: false,
+                ..
+            } => Token::empty_tag(self.to_cow(name), self.to_attrs(attrs)),
+            SpanTokens::Error(err) => Token::Error(err),
+            SpanTokens::Eof => Token::Eof,
+            SpanTokens::EndTag(None) => Token::auto_close_tag(),
+        })
+    }
+}
+
+impl<'a, E> SliceIterator<'a, E> {
+    fn to_cow(&self, span: Spans) -> Cow<'a, [u8]> {
+        if let Some((start, end)) = span.to_range() {
+            Cow::Borrowed(&self.reader.slice[start..end])
+        } else {
+            let mut vec = vec![];
+            for datum in span.data {
+                match datum {
+                    Mix::Owned(bytes) => vec.extend_from_slice(&bytes),
+                    Mix::Range(s, e) => vec.extend_from_slice(&self.reader.slice[s..e]),
+                }
+            }
+            Cow::Owned(vec)
         }
     }
+
+    fn to_attrs(&self, attrs: Vec<(Spans, Spans)>) -> Vec<(Cow<'a, [u8]>, Cow<'a, [u8]>)> {
+        let mut vec = vec![];
+        for (name, val) in attrs {
+            vec.push((self.to_cow(name), self.to_cow(val)));
+        }
+        vec
+    }
+}
+
+pub struct BufIterator<'a, R, E> {
+    state: Tokenizer,
+    reader: BuffReader<'a, R>,
+    emitter: E,
 }
 
 pub(crate) enum Control {
@@ -86,6 +140,12 @@ enum TokenState {
     PiTargetAfter,
     PiData,
     PiAfter,
+    XmlDecl,
+    XmlDeclAttrName,
+    XmlDeclAttrNameAfter,
+    XmlDeclAttrValueBefore,
+    XmlDeclAttrValue(DeclQuote),
+    XmlDeclAfter,
     MarkupDecl,
     CommentStart,
     CommentStartDash,
@@ -111,15 +171,14 @@ enum TokenState {
     Doctype,
     BeforeDoctypeName,
     DoctypeName,
-    AfterDoctypeName,
-    AfterDoctypeKeyword(DoctypeKind),
-    BeforeDoctypeIdentifier(DoctypeKind),
-    DoctypeIdentifierDoubleQuoted(DoctypeKind),
-    DoctypeIdentifierSingleQuoted(DoctypeKind),
-    AfterDoctypeIdentifier(DoctypeKind),
-    BetweenDoctypePublicAndSystemIdentifiers,
+    AfterDoctypeName(usize),
     BogusDoctype,
+}
 
+impl Default for TokenState {
+    fn default() -> Self {
+        TokenState::Data
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -130,9 +189,22 @@ pub enum AttrValueKind {
     DoubleQuoted,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[doc(hidden)]
+pub enum DeclQuote {
+    SingleQuoted,
+    DoubleQuoted,
+}
+
+#[derive(Debug, Clone, Copy)]
+#[doc(hidden)]
+pub enum XmlDeclQuoteKind {
+    SingleQuoted,
+    DoubleQuoted,
+}
+
 #[derive(Debug, Clone, Copy)]
 pub enum DoctypeKind {
     Public,
     System,
 }
-
